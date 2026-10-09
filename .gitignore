@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+
+# Dependencies and generated output
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+dist/
+build/
+target/
+coverage/
+*.log
+
+# Local configuration and scratch files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+work/
