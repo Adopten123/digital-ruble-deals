@@ -33,6 +33,8 @@ MVP показывает собственную логику условного 
 - [Конкретный сценарий: печатные работы и акт приёмки](docs/SCENARIO.md)
 - [Сравнение постоплаты, аванса, аккредитива и нашего сценария](docs/ALTERNATIVES.md)
 - [Архитектура](docs/ARCHITECTURE.md)
+- [Модель данных и транзакций](docs/DATA_MODEL.md)
+- [Состояния сделки и разрешённые действия](docs/STATE_MACHINE.md)
 - [Архитектурный ориентир go-todoapp-1](docs/REFERENCE_ARCHITECTURE.md)
 - [Контракт API и событий](docs/API.md)
 - [План разработки](docs/BACKLOG.md)
