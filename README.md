@@ -26,6 +26,7 @@ MVP показывает собственную логику условного 
 - [Текущий статус и следующий шаг](docs/STATUS.md)
 - [Интервью и устный контекст](docs/research/README.md)
 - [Продукт и границы MVP](docs/PRODUCT.md)
+- [Конкретный сценарий: печатные работы и акт приёмки](docs/SCENARIO.md)
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Контракт API и событий](docs/API.md)
 - [План разработки](docs/BACKLOG.md)
