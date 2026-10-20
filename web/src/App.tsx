@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { api, ApiError, describeError } from './lib/api';
 import type { Counterparty, OrganisationKind, OwnOrganisation, Session } from './lib/api';
 import { formatRubles, validateBalances } from './lib/money';
+import Deals from './Deals';
 
 type Readiness = 'checking' | 'ready' | 'unavailable';
 
@@ -155,7 +156,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
         <span className="process-line" aria-hidden="true" />
         <div><span className="step-number">03</span><strong>Подписать</strong><p>Две подписи и проверка условий расчёта</p></div>
       </div>
-      <p className="stage-note"><span aria-hidden="true">i</span>Сейчас доступны регистрация, счёт и каталог контрагентов. Сделки, резервы и подписи — на следующем этапе.</p>
+      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте черновики сделок и просматривайте условия вместе с контрагентом. Согласование, резервы и подписи появятся в следующих обновлениях.</p>
     </section>
     <section className="auth-card panel" aria-label="Доступ в приложение">
       <div className="auth-tabs" aria-label="Выбор формы">
@@ -200,7 +201,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
 }
 
 function Workspace({ session, onUnauthorized }: { session: Session; onUnauthorized: (error: unknown) => void }) {
-  const [tab, setTab] = useState<'account' | 'catalog'>('account');
+  const [tab, setTab] = useState<'account' | 'deals' | 'catalog'>('account');
   return <div className="workspace">
     <div className="workspace-heading">
       <div><div className="eyebrow">{session.organisation ? 'Кабинет организации' : 'Учебный оператор'}</div>
@@ -211,9 +212,11 @@ function Workspace({ session, onUnauthorized }: { session: Session; onUnauthoriz
     </div>
     <nav className="workspace-tabs" aria-label="Разделы кабинета">
       <button className={tab === 'account' ? 'active' : ''} aria-current={tab === 'account' ? 'page' : undefined} onClick={() => setTab('account')}>{session.organisation ? 'Мой счёт' : 'Обзор'}</button>
+      {session.organisation && <button className={tab === 'deals' ? 'active' : ''} aria-current={tab === 'deals' ? 'page' : undefined} onClick={() => setTab('deals')}>Сделки</button>}
       <button className={tab === 'catalog' ? 'active' : ''} aria-current={tab === 'catalog' ? 'page' : undefined} onClick={() => setTab('catalog')}>Контрагенты</button>
     </nav>
-    {tab === 'catalog' ? <Catalog key={session.user.id} ownId={session.organisation?.id} onUnauthorized={onUnauthorized} />
+    {tab === 'deals' && session.organisation ? <Deals key={session.user.id} organisation={session.organisation} onUnauthorized={onUnauthorized} />
+      : tab === 'catalog' ? <Catalog key={session.user.id} ownId={session.organisation?.id} onUnauthorized={onUnauthorized} />
       : session.organisation ? <Account key={session.user.id} session={session} onUnauthorized={onUnauthorized} />
         : <section className="panel operator-scope"><div className="section-icon" aria-hidden="true">↳</div><h2>Отдельный доступ оператора</h2>
           <p>У этого аккаунта нет собственной организации и счёта. Оператор не подписывает документы за стороны и не согласует их условия.</p>
@@ -228,8 +231,10 @@ function Account({ session, onUnauthorized }: { session: Session; onUnauthorized
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
+  const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const request = ++requestSequence.current;
     setLoading(true);
     setError(null);
     setData(null);
@@ -237,13 +242,14 @@ function Account({ session, onUnauthorized }: { session: Session; onUnauthorized
       const result = await api.ownOrganisation();
       if (result.account.currency !== 'RUB') throw new Error('Сервер вернул неподдерживаемую валюту счёта.');
       validateBalances(result.account.total_kopecks, result.account.reserved_kopecks, result.account.available_kopecks);
+      if (request !== requestSequence.current) return;
       setData(result);
       setLoadedAt(new Date());
-    } catch (failure) { setError(failure); onUnauthorized(failure); }
-    finally { setLoading(false); }
+    } catch (failure) { if (request === requestSequence.current) { setError(failure); onUnauthorized(failure); } }
+    finally { if (request === requestSequence.current) setLoading(false); }
   }, [onUnauthorized]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { requestSequence.current += 1; }; }, [load]);
 
   return <>
     <section className="account-section" aria-labelledby="account-title">
@@ -263,7 +269,7 @@ function Account({ session, onUnauthorized }: { session: Session; onUnauthorized
     </section>
     <div className="overview-grid">
       <section className="panel next-stage"><div className="section-icon" aria-hidden="true">↗</div><span className="tag">Следующий этап</span><h2>От условий к расчёту</h2>
-        <p>Создание сделок, резервирование, работа с PDF и тестовые подписи появятся после реализации денежного ядра.</p>
+        <p>Создание и просмотр черновиков уже доступны в разделе «Сделки». Далее появятся согласование условий, PDF, резервирование и две тестовые подписи.</p>
         <div className="future-flow"><span>Согласование</span><span aria-hidden="true">→</span><span>Резерв</span><span aria-hidden="true">→</span><span>Две подписи</span><span aria-hidden="true">→</span><span>Расчёт</span></div>
       </section>
       <section className="panel organisation-info"><h2>Ваша организация</h2><dl><div><dt>Название</dt><dd>{session.organisation?.name}</dd></div><div><dt>Идентификатор</dt><dd><code>{session.organisation?.id}</code></dd></div><div><dt>Доступ</dt><dd>Владелец учебной организации</dd></div></dl><p className="field-help">Права проверяются сервером для каждого запроса.</p></section>
