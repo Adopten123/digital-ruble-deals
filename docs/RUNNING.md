@@ -12,7 +12,7 @@
 docker compose up --build
 ```
 
-Открыть **http://localhost:8080**. Это канонический origin: `127.0.0.1` и `localhost` различаются при проверке CSRF / Origin. Порт опубликован только на loopback. БД и API наружу не публикуются; `/internal/` не проксируется.
+Открыть **http://localhost:8080**. Это канонический origin: `127.0.0.1` и `localhost` различаются при проверке CSRF / Origin. Порт опубликован только на loopback. Web подключён к отдельной bridge-сети ingress; связи web → API и API → БД остаются во внутренних сетях. БД и API наружу не публикуются; `/internal/` не проксируется. Разделение внешней и внутренней сети соответствует [модели Docker Compose](https://docs.docker.com/compose/how-tos/networking/).
 
 Порядок запуска: PostgreSQL healthcheck → migrate → access (ограниченные права роли API) → bootstrap → API readiness → web. Миграции проверяют контрольные суммы; bootstrap не повторяет начальное зачисление и не сбрасывает пароли. БД, ключи и будущие документы сохраняются в named volumes. API и web работают непривилегированными пользователями; ключ доступен API только для чтения.
 

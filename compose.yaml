@@ -104,7 +104,7 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    networks: [frontend]
+    networks: [ingress, frontend]
     depends_on:
       api: {condition: service_healthy}
     healthcheck:
@@ -115,6 +115,7 @@ services:
     restart: unless-stopped
 
 networks:
+  ingress: {driver: bridge}
   database: {internal: true}
   frontend: {internal: true}
 volumes:
