@@ -20,6 +20,9 @@ import (
 	authservice "github.com/Adopten123/digital-ruble-deals/internal/features/auth/service"
 	authhttp "github.com/Adopten123/digital-ruble-deals/internal/features/auth/transport/http"
 	"github.com/Adopten123/digital-ruble-deals/internal/features/bootstrap"
+	dealrepo "github.com/Adopten123/digital-ruble-deals/internal/features/deals/repository/postgres"
+	dealservice "github.com/Adopten123/digital-ruble-deals/internal/features/deals/service"
+	dealhttp "github.com/Adopten123/digital-ruble-deals/internal/features/deals/transport/http"
 	orgrepo "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/repository/postgres"
 	orgservice "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/service"
 	orghttp "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/transport/http"
@@ -112,11 +115,13 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 	if err != nil {
 		return errors.New("cannot initialize password service")
 	}
-	authHandler := authhttp.New(authService, httpapi.NewCSRF(key, cfg.AppOrigin, cfg.SecureCookies))
+	csrf := httpapi.NewCSRF(key, cfg.AppOrigin, cfg.SecureCookies)
+	authHandler := authhttp.New(authService, csrf)
 	organizationService := orgservice.New(orgrepo.New(pool), key)
 	mux := http.NewServeMux()
 	authHandler.RegisterRoutes(mux)
 	orghttp.New(organizationService).RegisterRoutes(mux, authHandler.Require)
+	dealhttp.New(dealservice.New(dealrepo.New(pool), key), csrf).RegisterRoutes(mux, authHandler.Require)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.JSON(w, 200, map[string]string{"status": "ok", "contour": "test"})
 	})
@@ -127,7 +132,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "foundation"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "deal_drafts"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")
