@@ -17,6 +17,11 @@ build/
 target/
 coverage/
 *.log
+*.tsbuildinfo
+playwright-report/
+test-results/
+/poaktu
+/poaktu.exe
 
 # Local configuration and scratch files
 .idea/
