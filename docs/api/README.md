@@ -130,7 +130,7 @@ GET вычисляет `REVIEW_REQUIRED` для истёкшего DRAFT по в
 
 `GET /api/v1/deals?q=...&status=DRAFT&role=customer&limit=20` принимает только `q,status,role,created_from,created_to,limit,cursor`, каждое не более одного раза. Неизвестные / повторные поля, неверный escape, пустые даты / limit и обратный период дают 400.
 
-`q` до 200 Unicode-символов после trim ищет ID / название сделки и ID / название контрагента. `role` — customer или supplier, пустой — обе. Даты RFC 3339 включительны: `created_from <= created_at <= created_to`. Frontend разворачивает выбранные календарные дни в своём часовом поясе до последней микросекунды конечного дня.
+`q` до 200 Unicode-символов после trim ищет ID / название сделки и ID / название контрагента без учёта регистра во всех четырёх полях. `role` — customer или supplier, пустой — обе. Даты RFC 3339 включительны: `created_from <= created_at <= created_to`. Frontend разворачивает выбранные календарные дни в своём часовом поясе до последней микросекунды конечного дня.
 
 `status` допускает DRAFT, AGREED, FUNDED, READY_TO_SETTLE, DISPUTED, CANCELLATION_PENDING, REVIEW_REQUIRED, SETTLED, CANCELLED, REFUNDED; текущая реализация может вернуть только DRAFT / REVIEW_REQUIRED. Допуск фильтра не означает реализацию перехода. Пустой статус — все.
 
@@ -163,6 +163,7 @@ GET вычисляет `REVIEW_REQUIRED` для истёкшего DRAFT по в
 POSIX shell, curl и jq; запускать из отдельной временной папки. Данные примера публичные учебные. Файлы cookie/ответов содержат действующую сессию, не коммитить и не публиковать. Этот пример не создаёт сделку и не переводит средства.
 
 ```sh
+set -eu
 BASE_URL=http://localhost:8080
 ORIGIN=http://localhost:8080
 curl --fail-with-body -sS -c cookies.txt "$BASE_URL/api/v1/auth/csrf" > csrf.json

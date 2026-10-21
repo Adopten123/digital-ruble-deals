@@ -27,8 +27,8 @@
 | Метод и путь относительно `/api/v1` | Тело / результат | Доступ |
 |---|---|---|
 | `GET /auth/csrf` | `{csrf_token}` | Без сессии / пользователь |
-| `POST /auth/register` | `{email, password, organisation: {name, kind}}`; `kind`: `COMPANY` или `IP`; `201`, пользователь, организация и cookie сессии | Без сессии |
-| `POST /auth/login` | `{email, password}`; `200`, пользователь, организация и cookie сессии | Без сессии |
+| `POST /auth/register` | `{email, password, organisation: {name, kind}}`; `kind`: `COMPANY` или `IP`; `201`, пользователь, организация, `session_expires_at`, новый `csrf_token` и cookie сессии | Без сессии |
+| `POST /auth/login` | `{email, password}`; `200`, пользователь, организация, `session_expires_at`, новый `csrf_token` и cookie сессии | Без сессии |
 | `POST /auth/logout` | Пустое тело; `204`, отзыв и очистка cookie | Пользователь |
 | `GET /auth/me` | `{user: {id, email, system_role}, organisation: {id, name, kind, role}, session_expires_at}`; организация оператора может быть `null` | Пользователь |
 | `GET /organisations` | `q`, `limit`, `cursor`; только `id`, `name`, `kind`, `is_demo` | Пользователь |
