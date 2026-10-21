@@ -352,7 +352,7 @@ function Catalog({ ownId, onUnauthorized }: { ownId?: string; onUnauthorized: (e
 
   return <section className="catalog" aria-labelledby="catalog-title">
     <div className="section-heading"><div><h2 id="catalog-title">Каталог контрагентов</h2><p className="muted">Найдите организацию по названию</p></div><span className="tag">Компании и ИП</span></div>
-    <form className="search-form" onSubmit={search} role="search"><label className="visually-hidden" htmlFor="counterparty-search">Название организации</label><div className="search-field"><span aria-hidden="true">⌕</span><input id="counterparty-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название организации" maxLength={400} /></div><button className="button button-primary" type="submit" disabled={loading}>Найти</button></form>
+    <form className="search-form" onSubmit={search} role="search"><label className="visually-hidden" htmlFor="counterparty-search">Название организации</label><div className="search-field"><span aria-hidden="true">⌕</span><input id="counterparty-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название организации" maxLength={400} /></div><button className="button button-primary" type="submit">Найти</button></form>
     <p className="catalog-privacy">В каталоге доступны название, форма и ID. Остатки, документы и данные участников других организаций закрыты.</p>
     {error != null && <ErrorNotice error={error} onRetry={() => void load(activeQuery, items.length ? cursor ?? undefined : undefined)} />}
     <div className="panel catalog-list">

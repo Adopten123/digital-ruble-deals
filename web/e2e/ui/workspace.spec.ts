@@ -1,6 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '../support.ts';
 
+test('catalog search accepts Enter while the initial page is still loading', async ({ page, actors }) => {
+  let releaseInitial!: () => void;
+  const initialGate = new Promise<void>((resolve) => { releaseInitial = resolve; });
+  await page.route('**/api/v1/organisations?*', async (route) => {
+    if (!new URL(route.request().url()).searchParams.get('q')) await initialGate;
+    await route.continue();
+  });
+  try {
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Учебный счёт' })).toBeVisible();
+    await page.getByRole('button', { name: 'Контрагенты', exact: true }).click();
+    await expect(page.getByText('Загружаем каталог', { exact: true })).toBeVisible();
+    await page.getByLabel('Название организации', { exact: true }).fill(actors.supplier.organisation!.name);
+    const searched = page.waitForResponse((response) => response.url().includes('/api/v1/organisations?') && new URL(response.url()).searchParams.get('q') === actors.supplier.organisation!.name, { timeout: 5_000 });
+    await page.getByLabel('Название организации', { exact: true }).press('Enter');
+    expect((await searched).status()).toBe(200);
+    await expect(page.locator('.counterparty').filter({ hasText: actors.supplier.organisation!.id })).toBeVisible();
+    const initialResponse = page.waitForResponse((response) => response.url().includes('/api/v1/organisations?') && !new URL(response.url()).searchParams.get('q'));
+    releaseInitial();
+    await initialResponse;
+    await expect(page.locator('.counterparty')).toHaveCount(1);
+    await expect(page.locator('.counterparty')).toContainText(actors.supplier.organisation!.id);
+  } finally { releaseInitial(); }
+});
+
 test('the cabinet shows three separate balances and the catalog exposes only public fields', async ({ page, actors }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Учебный счёт' })).toBeVisible();
