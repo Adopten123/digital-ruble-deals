@@ -1,0 +1,6 @@
+body { margin: 0; background: #fafafa; font-family: system-ui, sans-serif; color: #24333a; }
+.docs-header { box-sizing: border-box; max-width: 1460px; margin: auto; padding: 24px 20px 8px; }
+.docs-header h1 { margin: 16px 0 8px; font-size: clamp(24px, 5vw, 36px); }
+.docs-header p { max-width: 1050px; line-height: 1.5; }
+.docs-header a { color: #205e46; overflow-wrap: anywhere; }
+.swagger-ui .wrapper { padding-bottom: 28px; }

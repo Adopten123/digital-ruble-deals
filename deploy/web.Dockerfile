@@ -3,6 +3,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY web/ ./
+COPY docs/api/openapi.json /docs/api/openapi.json
+COPY docs/swagger/ /docs/swagger/
 RUN npm run build
 
 FROM nginx:1.30.6-alpine3.24@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
