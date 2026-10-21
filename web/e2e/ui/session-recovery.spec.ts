@@ -1,15 +1,34 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support.ts';
 import type { Session } from '../../src/lib/api.ts';
 
 type Account = { name: string; email: string; password: string; session: Session };
 
+async function submitAuth(page: Page, button: string, path: string, expectedStatus: number) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const received = page.waitForResponse((response) => response.url().endsWith(path) && response.request().method() === 'POST');
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const response = await received;
+    if (response.status() !== 429 || attempt === 2) {
+      expect(response.status()).toBe(expectedStatus);
+      return response;
+    }
+    expect((await response.json()).error.code).toBe('RATE_LIMITED');
+    const seconds = Number(response.headers()['retry-after']);
+    expect(Number.isInteger(seconds) && seconds >= 1 && seconds <= 60, 'bounded server Retry-After').toBe(true);
+    await expect(page.getByRole('alert')).toContainText('Слишком много попыток');
+    await test.step(`respect the shared proxy auth budget: wait ${seconds}s before explicit retry`, async () => { await delay(seconds * 1000); });
+  }
+  throw new Error('Authentication retry budget exhausted');
+}
+
 async function login(page: Page, account: Account) {
   await page.goto('/');
   await page.getByLabel('Email', { exact: true }).fill(account.email);
   await page.getByLabel('Пароль', { exact: true }).fill(account.password);
-  await page.getByRole('button', { name: 'Войти в кабинет', exact: true }).click();
+  await submitAuth(page, 'Войти в кабинет', '/auth/login', 200);
   await expect(page.getByRole('heading', { name: account.name, exact: true })).toBeVisible();
 }
 
@@ -22,10 +41,7 @@ async function registerAccount(page: Page, label = 'Session owner'): Promise<Acc
   await page.getByLabel('Email', { exact: true }).fill(email);
   await page.getByLabel('Пароль', { exact: true }).fill(password);
   await page.getByLabel('Название организации', { exact: true }).fill(name);
-  const registered = page.waitForResponse((response) => response.url().endsWith('/auth/register') && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Создать организацию', exact: true }).click();
-  const response = await registered;
-  expect(response.status()).toBe(201);
+  const response = await submitAuth(page, 'Создать организацию', '/auth/register', 201);
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
   return { name, email, password, session: await response.json() };
 }
@@ -38,6 +54,7 @@ async function switchAccount(page: Page) {
 }
 
 test.describe('shared cookies must not change the actor behind an old cabinet', () => {
+  test.describe.configure({ timeout: 90_000 });
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('an old account read rechecks identity instead of mixing another account balances with its heading', async ({ page, context }, testInfo) => {
@@ -135,7 +152,13 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
     expect(commands).toHaveLength(2);
     await page.getByRole('button', { name: 'Выйти', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Рады видеть вас', exact: true })).toBeVisible();
+    let loginAttempts = 0;
+    await page.route('**/api/v1/auth/login', async route => {
+      if (++loginAttempts === 1) return route.fulfill({ status: 429, headers: { 'Retry-After': '1' }, json: { error: { code: 'RATE_LIMITED' } } });
+      await route.continue();
+    });
     await login(page, owner);
+    expect(loginAttempts).toBeGreaterThanOrEqual(2);
     await page.getByRole('button', { name: 'Сделки', exact: true }).click();
     await page.getByRole('button', { name: 'Продолжить создание', exact: true }).click();
     await expect(page.getByLabel('Название сделки', { exact: true })).toHaveValue(title);
