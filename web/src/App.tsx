@@ -135,6 +135,13 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
     setBusy(true);
     setError(null);
     try {
+      const passwordLength = [...password].length;
+      if (passwordLength > 128 || (mode === 'register' && passwordLength < 12)) {
+        throw new Error('Пароль должен содержать от 12 до 128 символов.');
+      }
+      if (mode === 'register' && [...organisationName.trim()].length > 200) {
+        throw new Error('Название организации должно содержать до 200 символов.');
+      }
       const session = mode === 'login'
         ? await api.login(email.trim(), password)
         : await api.register({ email: email.trim(), password, organisation: { name: organisationName.trim(), kind } });
@@ -170,10 +177,10 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
           <label htmlFor={`${formId}-email`}>Email</label>
           <input id={`${formId}-email`} type="email" autoComplete="username" maxLength={254} required placeholder="name@company.ru" value={email} onChange={(event) => setEmail(event.target.value)} />
           <label htmlFor={`${formId}-password`}>Пароль</label>
-          <input id={`${formId}-password`} type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'register' ? 12 : undefined} maxLength={128} required placeholder={mode === 'register' ? 'От 12 до 128 символов' : 'Введите пароль'} value={password} onChange={(event) => setPassword(event.target.value)} />
+          <input id={`${formId}-password`} type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} maxLength={256} required placeholder={mode === 'register' ? 'От 12 до 128 символов' : 'Введите пароль'} value={password} onChange={(event) => setPassword(event.target.value)} />
           {mode === 'register' && <>
             <label htmlFor={`${formId}-name`}>Название организации</label>
-            <input id={`${formId}-name`} autoComplete="organization" maxLength={200} required placeholder="ООО «Название»" value={organisationName} onChange={(event) => setOrganisationName(event.target.value)} />
+            <input id={`${formId}-name`} autoComplete="organization" maxLength={400} required placeholder="ООО «Название»" value={organisationName} onChange={(event) => setOrganisationName(event.target.value)} />
             <label htmlFor={`${formId}-kind`}>Форма организации</label>
             <select id={`${formId}-kind`} value={kind} onChange={(event) => setKind(event.target.value as OrganisationKind)}>
               <option value="COMPANY">Компания</option><option value="IP">Индивидуальный предприниматель</option>
