@@ -8,6 +8,39 @@ async function openDeals(page: Page) {
   await expect(page.getByRole('search', { name: 'Поиск сделок' }).getByRole('button', { name: 'Найти', exact: true })).toBeEnabled();
 }
 
+test('blank or one-character organisation name is explained locally and correction registers a separate company', async ({ browser }) => {
+  const context = await browser.newContext({ baseURL: E2E_BASE_URL, storageState: { cookies: [], origins: [] } });
+  try {
+    const page = await context.newPage();
+    let posts = 0;
+    page.on('request', (request) => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/auth/register') posts += 1; });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Регистрация', exact: true }).click();
+    await page.getByLabel('Email', { exact: true }).fill(`blank-name-${randomUUID()}@example.test`);
+    await page.getByLabel('Пароль', { exact: true }).fill('BlankNameRegression2026!');
+    for (const invalidName of ['   ', 'Я', '🧪']) {
+      await page.getByLabel('Название организации', { exact: true }).fill(invalidName);
+      await page.getByRole('button', { name: 'Создать организацию', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('Название организации должно содержать от 2 до 200 символов.');
+      expect(posts).toBe(0);
+    }
+    await expect(page.getByLabel('Название организации', { exact: true })).toBeEnabled();
+
+    const name = `Исправленное учебное название ${randomUUID()}`;
+    await page.getByLabel('Название организации', { exact: true }).fill(`  ${name}  `);
+    const registration = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth/register');
+    await page.getByRole('button', { name: 'Создать организацию', exact: true }).click();
+    const response = await registration;
+    expect(response.status()).toBe(201);
+    expect(response.request().postDataJSON()).toMatchObject({ organisation: { name, kind: 'COMPANY' } });
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+    await expect(page.locator('.balance-card')).toHaveCount(3);
+    for (const card of await page.locator('.balance-card').all()) await expect(card.locator('strong')).toHaveText('0,00 ₽');
+    expect(posts).toBe(1);
+  } finally { await context.close(); }
+});
+
 test('Enter in the supplier picker searches without submitting the enclosing draft form', async ({ page, actors }) => {
   await openDeals(page);
   await page.getByRole('button', { name: 'Новая сделка', exact: true }).click();

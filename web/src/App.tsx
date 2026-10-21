@@ -139,8 +139,9 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
       if (passwordLength > 128 || (mode === 'register' && passwordLength < 12)) {
         throw new Error('Пароль должен содержать от 12 до 128 символов.');
       }
-      if (mode === 'register' && [...organisationName.trim()].length > 200) {
-        throw new Error('Название организации должно содержать до 200 символов.');
+      const nameLength = [...organisationName.trim()].length;
+      if (mode === 'register' && (nameLength < 2 || nameLength > 200)) {
+        throw new Error('Название организации должно содержать от 2 до 200 символов.');
       }
       const session = mode === 'login'
         ? await api.login(email.trim(), password)
