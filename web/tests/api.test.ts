@@ -108,3 +108,21 @@ test('identity change during CSRF preflight cancels the old mutation without sen
   await rejected;
   assert.equal(calls, 1, 'only preflight, no old mutation under the new actor');
 });
+
+test('a late 401 for the previous actor cannot clear the new actor CSRF cache', async () => {
+  let oldReply!: (response: Response) => void;
+  let csrfReads = 0;
+  const client = new ApiClient(async (url) => {
+    if (String(url).endsWith('/csrf')) { csrfReads++; return Response.json({ csrf_token: 'new-actor-token' }); }
+    return new Promise<Response>(resolve => { oldReply = resolve; });
+  });
+  client.bindIdentity('old-user');
+  const old = client.ownOrganisation();
+  const rejected = assert.rejects(old, (error: unknown) => error instanceof ApiError && error.status === 401);
+  client.bindIdentity('new-user');
+  assert.equal(await client.csrf(), 'new-actor-token');
+  oldReply(Response.json({ error: { code: 'SESSION_EXPIRED' } }, { status: 401 }));
+  await rejected;
+  assert.equal(await client.csrf(), 'new-actor-token');
+  assert.equal(csrfReads, 1);
+});

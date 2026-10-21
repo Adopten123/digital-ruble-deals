@@ -172,6 +172,7 @@ export class ApiClient {
   }
 
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    const generation = this.tokenGeneration;
     const response = await this.fetcher(`/api/v1${path}`, {
       ...options,
       credentials: 'same-origin',
@@ -180,7 +181,7 @@ export class ApiClient {
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => null);
       const error = parseApiError(response.status, body);
-      if (error.code === 'CSRF_INVALID' || error.code === 'SESSION_CHANGED' || response.status === 401) this.clearCsrf();
+      if (generation === this.tokenGeneration && (error.code === 'CSRF_INVALID' || error.code === 'SESSION_CHANGED' || response.status === 401)) this.clearCsrf();
       throw error;
     }
     if (response.status === 204) return undefined as T;
