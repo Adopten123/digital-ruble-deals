@@ -1,41 +1,54 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support.ts';
+import type { Session } from '../../src/lib/api.ts';
 
-async function login(page: Page) {
+type Account = { name: string; email: string; password: string; session: Session };
+
+async function login(page: Page, account: Account) {
   await page.goto('/');
-  await page.getByLabel('Email', { exact: true }).fill('customer@demo.poaktu.local');
-  await page.getByLabel('Пароль', { exact: true }).fill('PoaktuDemo2026!');
+  await page.getByLabel('Email', { exact: true }).fill(account.email);
+  await page.getByLabel('Пароль', { exact: true }).fill(account.password);
   await page.getByRole('button', { name: 'Войти в кабинет', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Демо Заказчик', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: account.name, exact: true })).toBeVisible();
 }
 
-async function switchAccount(page: Page) {
+async function registerAccount(page: Page, label = 'Session owner'): Promise<Account> {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Выйти', exact: true }).click();
   await page.getByRole('button', { name: 'Регистрация', exact: true }).click();
-  const name = `Session switch ${randomUUID()}`;
-  await page.getByLabel('Email', { exact: true }).fill(`session-switch-${randomUUID()}@example.test`);
-  await page.getByLabel('Пароль', { exact: true }).fill('SessionSwitchOnly2026!');
+  const name = `${label} ${randomUUID()}`;
+  const email = `session-${randomUUID()}@example.test`;
+  const password = 'SessionSwitchOnly2026!';
+  await page.getByLabel('Email', { exact: true }).fill(email);
+  await page.getByLabel('Пароль', { exact: true }).fill(password);
   await page.getByLabel('Название организации', { exact: true }).fill(name);
   const registered = page.waitForResponse((response) => response.url().endsWith('/auth/register') && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Создать организацию', exact: true }).click();
   const response = await registered;
   expect(response.status()).toBe(201);
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
-  return { name, session: await response.json() };
+  return { name, email, password, session: await response.json() };
+}
+
+async function switchAccount(page: Page) {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Рады видеть вас', exact: true })).toBeVisible();
+  return registerAccount(page, 'Session switch');
 }
 
 test.describe('shared cookies must not change the actor behind an old cabinet', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('an old account read rechecks identity instead of mixing another account balances with its heading', async ({ page, context }, testInfo) => {
-    await login(page);
+    const owner = await registerAccount(page);
     const other = await context.newPage();
     const changed = await switchAccount(other);
     const refreshed = page.waitForResponse((response) => response.url().endsWith('/organisations/me'));
     await page.getByRole('button', { name: 'Обновить', exact: true }).click();
-    expect((await refreshed).status()).toBe(409);
+    const response = await refreshed;
+    expect(response.request().headers()['x-expected-user-id']).toBe(owner.session.user.id);
+    expect(response.status()).toBe(409);
     await expect(page.getByRole('heading', { name: changed.name, exact: true })).toBeVisible();
     await expect(page.getByRole('alert')).toContainText('Аккаунт изменился');
     for (const card of await page.locator('.balance-card').all()) await expect(card.locator('strong')).toHaveText('0,00 ₽');
@@ -43,7 +56,7 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
   });
 
   test('an old draft without cached CSRF cannot be submitted as the new cookie owner', async ({ page, context, actors }) => {
-    await login(page);
+    const owner = await registerAccount(page);
     await page.reload(); // A fresh API client has no cached CSRF token.
     await page.getByRole('button', { name: 'Сделки', exact: true }).click();
     await page.getByRole('button', { name: 'Новая сделка', exact: true }).click();
@@ -66,16 +79,16 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
     await expect(page.getByRole('heading', { name: changed.name, exact: true })).toBeVisible();
     const list = await page.request.get('/api/v1/deals', { params: { q: title } });
     expect((await list.json()).items).toEqual([]);
-    const saved = await page.evaluate((id) => sessionStorage.getItem(`poaktu:pending-deal:${id}`), actors.customer.organisation!.id);
+    const saved = await page.evaluate((id) => sessionStorage.getItem(`poaktu:pending-deal:${id}`), owner.session.organisation!.id);
     expect(JSON.parse(saved!).input.title).toBe(title);
     await page.getByRole('button', { name: 'Сделки', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Новая сделка', exact: true })).toBeVisible();
     await expect(page.getByText('Один запрос ожидает подтверждения')).toHaveCount(0);
-    expect(changed.session.organisation.id).not.toBe(actors.customer.organisation!.id);
+    expect(changed.session.organisation!.id).not.toBe(owner.session.organisation!.id);
   });
 
   test('logout in one tab revokes the other tab on its next protected read', async ({ page, context }) => {
-    await login(page);
+    await registerAccount(page);
     const other = await context.newPage();
     await other.goto('/');
     await expect(other.locator('.balance-card')).toHaveCount(3);
@@ -91,7 +104,7 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
   });
 
   test('a pending command remains owned by its original organisation across a cross-tab account switch', async ({ page, context, actors }) => {
-    await login(page);
+    const owner = await registerAccount(page);
     await page.getByRole('button', { name: 'Сделки', exact: true }).click();
     await page.getByRole('button', { name: 'Новая сделка', exact: true }).click();
     await expect(page.locator('.supplier-picker').getByRole('button', { name: 'Найти', exact: true })).toBeEnabled();
@@ -122,7 +135,7 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
     expect(commands).toHaveLength(2);
     await page.getByRole('button', { name: 'Выйти', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Рады видеть вас', exact: true })).toBeVisible();
-    await login(page);
+    await login(page, owner);
     await page.getByRole('button', { name: 'Сделки', exact: true }).click();
     await page.getByRole('button', { name: 'Продолжить создание', exact: true }).click();
     await expect(page.getByLabel('Название сделки', { exact: true })).toHaveValue(title);
@@ -135,11 +148,11 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
     const list = await page.request.get('/api/v1/deals', { params: { q: title } });
     const deals = (await list.json()).items;
     expect(deals).toHaveLength(1);
-    expect(deals[0].customer_party_id).toBe(actors.customer.organisation!.id);
+    expect(deals[0].customer_party_id).toBe(owner.session.organisation!.id);
   });
 
   test('a failed logout keeps the real session and retry revokes it on the server', async ({ page }) => {
-    await login(page);
+    await registerAccount(page);
     await page.route('**/api/v1/auth/logout', route => route.fulfill({ status: 503, json: { error: { code: 'TEMPORARILY_UNAVAILABLE' }, request_id: 'logout-recovery-test' } }));
     await page.getByRole('button', { name: 'Выйти', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('logout-recovery-test');
