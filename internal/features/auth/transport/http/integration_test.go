@@ -158,6 +158,50 @@ func TestRegistrationSessionRotationAndLogout(t *testing.T) {
 	}
 }
 
+func TestExpectedUserIsOnlyASessionPrecondition(t *testing.T) {
+	f := setup(t)
+	f.login(t, "customer@demo.poaktu.local")
+	_, me, _ := f.request(t, "GET", "/api/v1/auth/me", "", 200)
+	oldUser := me["user"].(map[string]any)["id"].(string)
+	check := func(method, path, expected string, status int) {
+		t.Helper()
+		r, err := http.NewRequest(method, f.server.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("X-Expected-User-ID", expected)
+		r.Header.Set("Origin", origin)
+		r.Header.Set("X-CSRF-Token", f.csrf)
+		response, err := f.client.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != status {
+			t.Fatalf("%s got %d want %d: %s", path, response.StatusCode, status, body)
+		}
+		if status == http.StatusConflict && !strings.Contains(string(body), `"code":"SESSION_CHANGED"`) {
+			t.Fatalf("unexpected conflict: %s", body)
+		}
+	}
+	check("GET", "/api/v1/organisations/me", oldUser, 200)
+	check("GET", "/api/v1/organisations/me", "different-user", 409)
+	f.login(t, "supplier@demo.poaktu.local")
+	check("GET", "/api/v1/organisations/me", oldUser, 409)
+	check("POST", "/api/v1/auth/logout", oldUser, 409)
+	_, me, _ = f.request(t, "GET", "/api/v1/auth/me", "", 200)
+	newUser := me["user"].(map[string]any)["id"].(string)
+	if newUser == oldUser {
+		t.Fatal("account did not switch")
+	}
+	check("POST", "/api/v1/auth/logout", newUser, 204)
+	check("GET", "/api/v1/organisations/me", oldUser, 401)
+}
+
 func TestSecurityValidationAndGenericLogin(t *testing.T) {
 	f := setup(t)
 	for _, body := range []string{`null`, `[]`, `{"email":null,"password":"long-password"}`, `{"email":"a@example.test","password":null}`, `{"email":"a@example.test","password":"long-password","system_role":"DEMO_OPERATOR"}`, `{"email":"a@example.test","password":"long-password"} {}`} {

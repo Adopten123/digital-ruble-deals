@@ -33,6 +33,7 @@ export default function App() {
   const [notice, setNotice] = useState<unknown>(null);
   const [readiness, setReadiness] = useState<Readiness>('checking');
   const [loggingOut, setLoggingOut] = useState(false);
+  const sessionRevision = useRef(0);
 
   const checkReadiness = useCallback(async () => {
     setReadiness('checking');
@@ -43,41 +44,63 @@ export default function App() {
   }, []);
 
   const loadSession = useCallback(async () => {
+    const revision = ++sessionRevision.current;
+    api.clearCsrf();
     setInitializing(true);
     setBootstrapError(null);
-    try { setSession(await api.me()); }
+    try {
+      const next = await api.me();
+      if (revision !== sessionRevision.current) return;
+      api.bindIdentity(next.user.id);
+      setSession(next);
+    }
     catch (error) {
-      if (error instanceof ApiError && error.status === 401) setSession(null);
+      if (revision !== sessionRevision.current) return;
+      if (error instanceof ApiError && error.status === 401) { api.bindIdentity(null); setSession(null); }
       else setBootstrapError(error);
-    } finally { setInitializing(false); }
+    } finally { if (revision === sessionRevision.current) setInitializing(false); }
   }, []);
 
   useEffect(() => { void loadSession(); void checkReadiness(); }, [loadSession, checkReadiness]);
 
   const expireSession = useCallback((error: unknown) => {
     if (error instanceof ApiError && error.status === 401) {
+      sessionRevision.current += 1;
       api.clearCsrf();
+      api.bindIdentity(null);
       setSession(null);
+      setInitializing(false);
       setNotice(error);
+    } else if (error instanceof ApiError && ['SESSION_CHANGED', 'CSRF_INVALID'].includes(error.code)) {
+      setNotice(error);
+      void loadSession();
     }
-  }, []);
+  }, [loadSession]);
 
   async function authenticated(nextSession: Session) {
+    const revision = ++sessionRevision.current;
     api.clearCsrf();
+    api.bindIdentity(nextSession.user.id);
     setNotice(null);
+    setBootstrapError(null);
+    setInitializing(false);
     setSession(nextSession);
     try { await api.csrf(); }
-    catch (error) { setNotice(error); }
+    catch (error) { if (revision === sessionRevision.current) setNotice(error); }
   }
 
   async function logout() {
+    const revision = ++sessionRevision.current;
     setLoggingOut(true);
     setNotice(null);
     try {
       await api.logout();
+      if (revision !== sessionRevision.current) return;
       api.clearCsrf();
+      api.bindIdentity(null);
       setSession(null);
     } catch (error) {
+      if (revision !== sessionRevision.current) return;
       expireSession(error);
       setNotice(error);
     } finally { setLoggingOut(false); }
@@ -106,7 +129,7 @@ export default function App() {
           <p>Для входа нужны фактические данные сервера.</p>
           <ErrorNotice error={bootstrapError} onRetry={() => { void loadSession(); void checkReadiness(); }} />
         </section>
-          : session ? <Workspace session={session} onUnauthorized={expireSession} />
+          : session ? <Workspace key={session.user.id} session={session} onUnauthorized={expireSession} />
             : <AuthScreen onAuthenticated={authenticated} />}
     </main>
     <footer className="footer"><span>ПоАкту · Прототип для МСБ</span><span>Только учебные средства и тестовые подписи</span></footer>
