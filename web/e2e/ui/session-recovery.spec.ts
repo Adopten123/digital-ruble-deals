@@ -153,4 +153,3 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
     expect((await page.request.get('/api/v1/auth/me')).status()).toBe(401);
   });
 });
-
