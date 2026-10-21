@@ -62,6 +62,7 @@ function DealList({ ownId, onOpen, onUnauthorized }: ScopeProps & { ownId: strin
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [filterError, setFilterError] = useState<unknown>(null);
   const sequence = useRef(0);
   const formId = useId();
   const load = useCallback(async (active: DealFilters, nextCursor?: string) => {
@@ -79,23 +80,31 @@ function DealList({ ownId, onOpen, onUnauthorized }: ScopeProps & { ownId: strin
   useEffect(() => { void load(filters); return () => { sequence.current += 1; }; }, [filters, load]);
   function search(event: FormEvent) {
     event.preventDefault();
-    if (from && to && from > to) { setError(new Error('Начало периода не может быть позже его окончания.')); return; }
-    try { setFilters({ q: query.trim(), status, role, created_from: dateBoundary(from, false), created_to: dateBoundary(to, true) }); }
-    catch (failure) { setError(failure); }
+    try {
+      if (from && to && from > to) throw new Error('Начало периода не может быть позже его окончания.');
+      const next = { q: query.trim(), status, role, created_from: dateBoundary(from, false), created_to: dateBoundary(to, true) };
+      setFilterError(null);
+      setFilters(next);
+    } catch (failure) {
+      sequence.current += 1;
+      setFilterError(failure); setError(null); setItems([]); setCursor(null); setLoading(false);
+    }
   }
   const filtered = Object.values(filters).some(Boolean);
+  const canReset = filtered || filterError != null || Boolean(query || status || role || from || to);
   return <>
     <form className="deal-filters panel" onSubmit={search} role="search" aria-label="Поиск сделок">
-      <div className="deal-search-row"><label className="visually-hidden" htmlFor={`${formId}-query`}>Поиск по названию, ID или контрагенту</label><div className="search-field"><span aria-hidden="true">⌕</span><input id={`${formId}-query`} value={query} onChange={(event) => setQuery(event.target.value)} maxLength={200} placeholder="Название, ID или контрагент" /></div><button className="button button-primary" type="submit" disabled={loading}>Найти</button></div>
+      <div className="deal-search-row"><label className="visually-hidden" htmlFor={`${formId}-query`}>Поиск по названию, ID или контрагенту</label><div className="search-field"><span aria-hidden="true">⌕</span><input id={`${formId}-query`} value={query} onChange={(event) => setQuery(event.target.value)} maxLength={400} placeholder="Название, ID или контрагент" /></div><button className="button button-primary" type="submit" disabled={loading}>Найти</button></div>
       <div className="deal-filter-fields">
         <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option><option value="DRAFT">Черновик</option><option value="REVIEW_REQUIRED">Требует проверки</option></select></div>
         <div><label htmlFor={`${formId}-role`}>Моя роль</label><select id={`${formId}-role`} value={role} onChange={(event) => setRole(event.target.value as DealFilters['role'])}><option value="">Любая роль</option><option value="customer">Заказчик</option><option value="supplier">Исполнитель</option></select></div>
         <div><label htmlFor={`${formId}-from`}>Создана с</label><input type="date" id={`${formId}-from`} value={from} onChange={(event) => setFrom(event.target.value)} /></div>
         <div><label htmlFor={`${formId}-to`}>По дату включительно</label><input type="date" id={`${formId}-to`} value={to} onChange={(event) => setTo(event.target.value)} /></div>
       </div>
-      {filtered && <button className="text-button clear-filters" type="button" onClick={() => { setQuery(''); setStatus(''); setRole(''); setFrom(''); setTo(''); setFilters({}); }}>Сбросить фильтры</button>}
+      {canReset && <button className="text-button clear-filters" type="button" onClick={() => { setQuery(''); setStatus(''); setRole(''); setFrom(''); setTo(''); setFilterError(null); setFilters({}); }}>Сбросить фильтры</button>}
     </form>
-    <div className="deal-list-caption"><span>Сначала новые · Только сделки вашей организации</span><button className="text-button" type="button" disabled={loading} onClick={() => void load(filters)}>Обновить</button></div>
+    <div className="deal-list-caption"><span>Сначала новые · Только сделки вашей организации</span><button className="text-button" type="button" disabled={loading || filterError != null} onClick={() => void load(filters)}>Обновить</button></div>
+    {filterError != null && <Failure error={filterError} />}
     {error != null && <Failure error={error} retry={() => void load(filters, items.length ? cursor ?? undefined : undefined)} />}
     <div className="deal-list">
       {items.map((deal) => { const customer = deal.customer_party_id === ownId; return <button className="panel deal-row" key={deal.id} type="button" onClick={() => onOpen(deal.id)}>
@@ -103,9 +112,9 @@ function DealList({ ownId, onOpen, onUnauthorized }: ScopeProps & { ownId: strin
         <div className="deal-row-amount"><strong>{formatRubles(deal.amount_kopecks)}</strong><span>Срок: {dateLabel(deal.deadline_at)}</span><span className="deal-open">Открыть <span aria-hidden="true">↗</span></span></div>
       </button>; })}
       {loading && <div className="panel"><Busy>{items.length ? 'Загружаем следующие сделки' : 'Загружаем сделки'}</Busy></div>}
-      {!loading && error == null && !items.length && <div className="panel empty-state deal-empty"><span aria-hidden="true">▤</span><h3>{filtered ? 'Сделки не найдены' : 'Здесь начнутся ваши сделки'}</h3><p>{filtered ? 'Измените запрос или сбросьте фильтры.' : 'Создайте первую сделку: выберите исполнителя, укажите условия, сумму и срок.'}</p></div>}
+      {!loading && error == null && filterError == null && !items.length && <div className="panel empty-state deal-empty"><span aria-hidden="true">▤</span><h3>{filtered ? 'Сделки не найдены' : 'Здесь начнутся ваши сделки'}</h3><p>{filtered ? 'Измените запрос или сбросьте фильтры.' : 'Создайте первую сделку: выберите исполнителя, укажите условия, сумму и срок.'}</p></div>}
     </div>
-    {cursor && !loading && error == null && <button className="button button-quiet load-more" type="button" onClick={() => void load(filters, cursor)}>Показать ещё</button>}
+    {cursor && !loading && error == null && filterError == null && <button className="button button-quiet load-more" type="button" onClick={() => void load(filters, cursor)}>Показать ещё</button>}
   </>;
 }
 
@@ -204,9 +213,15 @@ function SupplierPicker({ ownId, value, onChange, disabled, onUnauthorized }: Sc
     finally { if (request === sequence.current) setLoading(false); }
   }, [ownId, onUnauthorized]);
   useEffect(() => { if (!value) void load(search); return () => { sequence.current += 1; }; }, [search, load, value]);
+  function searchSuppliers() {
+    if (disabled || loading) return;
+    const next = query.trim();
+    if (next === search) void load(next);
+    else setSearch(next);
+  }
   if (value) return <div className="selected-supplier"><div className="counterparty-icon" aria-hidden="true">{value.kind === 'IP' ? 'ИП' : 'К'}</div><div><strong>{value.name}</strong><span>{value.kind === 'IP' ? 'Индивидуальный предприниматель' : 'Компания'}</span><code>{value.id}</code></div><button type="button" className="text-button" disabled={disabled} onClick={() => onChange(null)}>Изменить</button></div>;
   return <div className="supplier-picker">
-    <label htmlFor={id}>Исполнитель</label><div className="deal-search-row"><input id={id} value={query} onChange={(event) => setQuery(event.target.value)} maxLength={200} placeholder="Найти по названию" /><button className="button button-quiet" type="button" disabled={disabled || loading} onClick={() => { const next = query.trim(); if (next === search) void load(next); else setSearch(next); }}>Найти</button></div>
+    <label htmlFor={id}>Исполнитель</label><div className="deal-search-row"><input id={id} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); searchSuppliers(); } }} maxLength={400} placeholder="Найти по названию" /><button className="button button-quiet" type="button" disabled={disabled || loading} onClick={searchSuppliers}>Найти</button></div>
     {error != null && <Failure error={error} retry={() => void load(search, items.length ? cursor ?? undefined : undefined)} />}
     <div className="supplier-results" aria-label="Выбор исполнителя">{items.map((item) => <button key={item.id} type="button" className="supplier-option" disabled={disabled} onClick={() => onChange(item)}><span><strong>{item.name}</strong><small>{item.kind === 'IP' ? 'ИП' : 'Компания'} · <code>{item.id}</code></small></span><span aria-hidden="true">＋</span></button>)}
       {loading && <Busy>Загружаем организации</Busy>}{!loading && !items.length && error == null && <p className="field-help supplier-empty">Другие организации не найдены. Измените название или зарегистрируйте отдельного исполнителя.</p>}
