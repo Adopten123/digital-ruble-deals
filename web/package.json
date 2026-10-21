@@ -3,19 +3,26 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=22.19.0 <23" },
+  "engines": {
+    "node": ">=22.19.0 <23"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck:e2e": "tsc --project tsconfig.e2e.json --pretty false",
+    "test:e2e": "playwright test",
+    "test:api": "playwright test --project=api",
+    "dev:e2e": "vite --config vite.e2e.config.ts"
   },
   "dependencies": {
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@types/node": "22.19.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
