@@ -24,7 +24,7 @@ test('the cabinet shows three separate balances and the catalog exposes only pub
   await expect(page.getByRole('heading', { name: 'Организации не найдены' })).toBeVisible();
   await page.getByLabel('Название организации', { exact: true }).fill(actors.customer.organisation!.name);
   await page.getByRole('button', { name: 'Найти', exact: true }).click();
-  await expect(page.locator('.counterparty').filter({ has: page.getByRole('heading', { name: actors.customer.organisation!.name, exact: true }) })).toContainText('Ваша');
+  await expect(page.locator('.counterparty').filter({ hasText: actors.customer.organisation!.id })).toContainText('Ваша');
 });
 
 test('catalog network failure does not invent rows and retry loads the server catalog', async ({ page }) => {
