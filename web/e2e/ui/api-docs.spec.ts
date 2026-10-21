@@ -61,8 +61,8 @@ test('Swagger protected reads use the existing same-origin HttpOnly session', as
   expect((await response.json()).user.id).toBe(actors.customer.user.id);
 });
 
-test('Swagger obtains CSRF, registers a synthetic account and logs it out with the rotated token', async ({ browser }) => {
-  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+test('Swagger obtains CSRF, registers a synthetic account and logs it out with the rotated token', async ({ browser, playwright, actors }) => {
+  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, storageState: { cookies: [], origins: [] } });
   try {
     const page = await context.newPage();
     await page.goto('/api-docs/');
@@ -83,5 +83,8 @@ test('Swagger obtains CSRF, registers a synthetic account and logs it out with t
     await logout.getByRole('button', { name: 'Execute', exact: true }).click();
     expect((await received).status()).toBe(204);
     expect((await page.request.get('/api/v1/auth/me')).status()).toBe(401);
+    const fixture = await playwright.request.newContext({ baseURL: test.info().project.use.baseURL, storageState: actors.customer.statePath });
+    try { expect((await fixture.get('/api/v1/auth/me')).status()).toBe(200); }
+    finally { await fixture.dispose(); }
   } finally { await context.close(); }
 });
