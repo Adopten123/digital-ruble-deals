@@ -110,6 +110,18 @@ func (h *Handler) rework(w http.ResponseWriter, r *http.Request) {
 	out, e := h.service.Rework(r.Context(), a, r.PathValue("id"), key, in)
 	result(w, r, out, e)
 }
+func (h *Handler) reserve(w http.ResponseWriter, r *http.Request) {
+	a, key, ok := h.command(w, r)
+	if !ok {
+		return
+	}
+	var in service.ReserveInput
+	if !httpapi.Decode(w, r, &in) {
+		return
+	}
+	out, e := h.service.Reserve(r.Context(), a, r.PathValue("id"), key, in)
+	result(w, r, out, e)
+}
 func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
 	a, key, ok := h.command(w, r)
 	if !ok {

@@ -79,6 +79,7 @@ type Mutation struct {
 	Reason                   string
 	Invalid                  *Failure
 	Prepare                  func(Deal, int64) (PreparedDocument, error)
+	VerifyDocument           func(Document, string) error
 }
 type AgreementRepository interface {
 	Mutate(context.Context, Mutation) (Result, error)
@@ -110,12 +111,46 @@ func (s *Service) mutation(ctx context.Context, actor Actor, id, key, op string,
 		cmd.Agreement = v
 	case ReworkInput:
 		cmd.Reason = v.Reason
+	case ReserveInput:
+		cmd.VerifyDocument = s.verifyDocument
 	}
 	repo, ok := s.repo.(AgreementRepository)
 	if !ok {
 		return Result{}, errors.New("agreement repository unavailable")
 	}
 	return repo.Mutate(ctx, cmd)
+}
+
+type Reserve struct {
+	ID            string    `json:"id"`
+	DealID        string    `json:"deal_id"`
+	DealVersion   int64     `json:"deal_version"`
+	AccountID     string    `json:"account_id"`
+	AmountKopecks string    `json:"amount_kopecks"`
+	Currency      string    `json:"currency"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+type ReserveInput struct {
+	DealVersion int64 `json:"deal_version"`
+}
+
+func (s *Service) Reserve(ctx context.Context, a Actor, id, key string, in ReserveInput) (Result, error) {
+	return s.mutation(ctx, a, id, key, "RESERVE_DEAL", in.DealVersion, in, nil, nil)
+}
+func (s *Service) verifyDocument(doc Document, key string) error {
+	if s.files == nil {
+		return errors.New("document storage unavailable")
+	}
+	b, e := s.files.Read(key)
+	if e != nil {
+		return e
+	}
+	h := sha256.Sum256(b)
+	if int64(len(b)) != doc.SizeBytes || hex.EncodeToString(h[:]) != doc.SHA256 {
+		return errors.New("stored document integrity mismatch")
+	}
+	return nil
 }
 func (s *Service) Patch(ctx context.Context, a Actor, id, key string, in PatchInput) (Result, error) {
 	var invalid *Failure

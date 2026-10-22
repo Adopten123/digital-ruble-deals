@@ -41,7 +41,7 @@ type Deal struct {
 	Document            *Document   `json:"document"`
 	Agreements          []Agreement `json:"agreements"`
 	Signatures          []any       `json:"signatures"`
-	Reserve             any         `json:"reserve"`
+	Reserve             *Reserve    `json:"reserve"`
 	PaymentID           *string     `json:"payment_id"`
 	Dispute             any         `json:"dispute"`
 	CancellationRequest any         `json:"cancellation_request"`

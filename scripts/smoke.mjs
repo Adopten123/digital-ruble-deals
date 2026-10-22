@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-// Creates only synthetic demo users and drafts. Never resets data or moves funds.
+// Creates synthetic users, documents, holds and balanced demo ledger movements.
+// Uses fresh zero-balance organizations; never resets data or spends the shared seed.
 const base = (process.env.BASE_URL ?? 'http://localhost:8080').replace(/\/$/, '');
 const origin = process.env.APP_ORIGIN ?? base;
 assert(['localhost', '127.0.0.1', '[::1]'].includes(new URL(base).hostname), 'Smoke target must be loopback');
@@ -11,7 +12,7 @@ class Client {
   cookies = new Map();
   csrf = '';
 
-  async request(path, { method = 'GET', body, headers = {}, expected = 200 } = {}) {
+  async request(path, { method = 'GET', body, headers = {}, expected = 200, binary = false } = {}) {
     const mutation = !['GET', 'HEAD'].includes(method);
     const response = await fetch(`${base}${path}`, {
       method,
@@ -32,10 +33,11 @@ class Client {
       if (/max-age=0/i.test(cookie) || !value) this.cookies.delete(name);
       else this.cookies.set(name, value);
     }
-    const text = await response.text();
+    const bytes = binary ? Buffer.from(await response.arrayBuffer()) : null;
+    const text = binary ? '' : await response.text();
     const json = text ? JSON.parse(text) : null;
     assert.equal(response.status, expected, `${method} ${path}: ${json?.error?.code ?? response.status}`);
-    return { response, json };
+    return { response, json, bytes };
   }
 
   async refreshCSRF() {
@@ -45,10 +47,10 @@ class Client {
     return this.csrf;
   }
 
-  async login(email) {
+  async login(email, password = 'PoaktuDemo2026!') {
     await this.refreshCSRF();
     const result = await this.request('/api/v1/auth/login', {
-      method: 'POST', body: { email, password: 'PoaktuDemo2026!' },
+      method: 'POST', body: { email, password },
     });
     await this.refreshCSRF();
     return result;
@@ -62,7 +64,7 @@ async function ready() {
       if (response.status === 200) {
         const body = await response.json();
         assert.equal(body.contour, 'test');
-        assert.equal(body.stage, 'deal_agreement');
+        assert.equal(body.stage, 'deal_reserves');
         return;
       }
     } catch (error) {
@@ -70,7 +72,7 @@ async function ready() {
     }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  throw new Error('Deal drafts API did not become ready');
+  throw new Error('Deal reserve API did not become ready');
 }
 
 await ready();
@@ -146,15 +148,48 @@ const { json: operatorAccount } = await operator.request('/api/v1/organisations/
 assert.equal(operatorAccount.error.code, 'FORBIDDEN');
 
 const stateFile = process.env.SMOKE_STATE_FILE;
+let previousState;
 if (stateFile && existsSync(stateFile)) {
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
-  assert.equal(saved.kind, 'poaktu-deal-drafts-smoke-v1');
+  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2'].includes(saved.kind));
+  previousState = saved;
   const { json: persisted } = await customer.request(`/api/v1/deals/${encodeURIComponent(saved.id)}`);
   assert.equal(persisted.title, saved.body.title);
   const { json: replayed } = await customer.request('/api/v1/deals', {
     method: 'POST', body: saved.body, headers: { 'Idempotency-Key': saved.key }, expected: 201,
   });
   assert.equal(replayed.id, saved.id, 'Restart must preserve idempotent create results');
+  if (saved.money) {
+    assert.match(saved.money.email, /^smoke-[a-f0-9-]+@demo\.poaktu\.local$/);
+    const previousCustomer = new Client();
+    await previousCustomer.login(saved.money.email, 'SmokeOnlyPassword2026!');
+    const { json: account } = await previousCustomer.request('/api/v1/organisations/me');
+    assert.equal(account.account.id, saved.money.account_id);
+    assert.equal(account.account.total_kopecks, '30000');
+    assert.equal(account.account.reserved_kopecks, '30000');
+    assert.equal(account.account.available_kopecks, '0');
+    const { json: card } = await previousCustomer.request(`/api/v1/deals/${saved.money.deal_id}`);
+    assert.equal(card.status, 'FUNDED');
+    assert.equal(card.agreements.length, 2);
+    assert.deepEqual(card.reserve, saved.money.reserve_result.reserve);
+    const { bytes } = await previousCustomer.request(`/api/v1/documents/${card.document.id}/download?version=${card.document.document_version}`, { binary: true });
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), card.document.sha256, 'Restart preserves exact private PDF bytes');
+    const { json: reserveReplay } = await previousCustomer.request(`/api/v1/deals/${card.id}/reserve`, {
+      method: 'POST', body: { deal_version: card.deal_version }, headers: { 'Idempotency-Key': saved.money.reserve_key }, expected: 201,
+    });
+    assert.deepEqual(reserveReplay, saved.money.reserve_result, 'Restart must replay the original reserve without a second hold');
+    const { json: creditReplay } = await operator.request(`/api/v1/demo/accounts/${saved.money.account_id}/credits`, {
+      method: 'POST', body: { amount_kopecks: '50000', reason: 'Учебное зачисление для smoke резервирования' }, headers: { 'Idempotency-Key': saved.money.credit_key }, expected: 201,
+    });
+    assert.equal(creditReplay.transaction_id, saved.money.credit_transaction_id, 'Restart must not credit again');
+    const { json: debitReplay } = await operator.request(`/api/v1/demo/accounts/${saved.money.account_id}/debits`, {
+      method: 'POST', body: { amount_kopecks: '20000', reason: 'Учебное списание только доступного остатка' }, headers: { 'Idempotency-Key': saved.money.debit_key }, expected: 201,
+    });
+    assert.equal(debitReplay.transaction_id, saved.money.debit_transaction_id, 'Restart must not debit again');
+    const { json: afterReplay } = await previousCustomer.request('/api/v1/organisations/me');
+    assert.deepEqual(afterReplay.account, account.account);
+    await previousCustomer.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
+  }
 }
 
 const dealBody = {
@@ -226,8 +261,44 @@ const { json: expired } = await create({ ...dealBody, deadline_at: '2020-01-01T0
 assert.equal(expired.error.code, 'DEADLINE_PASSED');
 const { json: accountAfterDrafts } = await customer.request('/api/v1/organisations/me');
 assert.deepEqual(accountAfterDrafts.account, customerAccount.account, 'Drafts must not reserve or transfer funds');
-if (stateFile && !existsSync(stateFile)) {
-  writeFileSync(stateFile, JSON.stringify({ kind: 'poaktu-deal-drafts-smoke-v1', id: draft.id, key: dealKey, body: dealBody }), { flag: 'wx', mode: 0o600 });
+// Full implemented path: register -> credit -> draft -> PDF -> two consents ->
+// reserve -> debit only available -> private PDF/read/replay after restart.
+const moneyCreateKey = randomUUID();
+const { json: moneyDraft } = await unauthenticated.request('/api/v1/deals', {
+  method: 'POST', body: { ...dealBody, title: `Учебный резерв ${suffix}`, amount_kopecks: '30000' }, headers: { 'Idempotency-Key': moneyCreateKey }, expected: 201,
+});
+const { json: moneyDocument } = await unauthenticated.request(`/api/v1/deals/${moneyDraft.id}/documents/generate`, {
+  method: 'POST', body: { expected_deal_version: moneyDraft.deal_version, template_id: 'printing-acceptance-v1' }, headers: { 'Idempotency-Key': randomUUID() }, expected: 201,
+});
+const agreement = { deal_version: moneyDocument.deal.deal_version, document_id: moneyDocument.document.id, document_version: moneyDocument.document.document_version, document_sha256: moneyDocument.document.sha256 };
+for (const client of [unauthenticated, supplier]) await client.request(`/api/v1/deals/${moneyDraft.id}/agree`, { method: 'POST', body: agreement, headers: { 'Idempotency-Key': randomUUID() } });
+const creditKey = randomUUID(), debitKey = randomUUID(), reserveKey = randomUUID();
+const { json: credit } = await operator.request(`/api/v1/demo/accounts/${own.account.id}/credits`, {
+  method: 'POST', body: { amount_kopecks: '50000', reason: 'Учебное зачисление для smoke резервирования' }, headers: { 'Idempotency-Key': creditKey }, expected: 201,
+});
+assert.equal(credit.account.total_kopecks, '50000');
+const { json: reserved } = await unauthenticated.request(`/api/v1/deals/${moneyDraft.id}/reserve`, {
+  method: 'POST', body: { deal_version: agreement.deal_version }, headers: { 'Idempotency-Key': reserveKey }, expected: 201,
+});
+assert.equal(reserved.deal.status, 'FUNDED');
+assert.equal(reserved.deal.deal_version, agreement.deal_version);
+assert.equal(reserved.reserve.amount_kopecks, '30000');
+const { json: refusal } = await operator.request(`/api/v1/demo/accounts/${own.account.id}/debits`, {
+  method: 'POST', body: { amount_kopecks: '20001', reason: 'Нельзя расходовать резерв' }, headers: { 'Idempotency-Key': randomUUID() }, expected: 422,
+});
+assert.equal(refusal.error.code, 'INSUFFICIENT_AVAILABLE_FUNDS');
+const { json: debit } = await operator.request(`/api/v1/demo/accounts/${own.account.id}/debits`, {
+  method: 'POST', body: { amount_kopecks: '20000', reason: 'Учебное списание только доступного остатка' }, headers: { 'Idempotency-Key': debitKey }, expected: 201,
+});
+assert.equal(debit.account.total_kopecks, '30000');
+assert.equal(debit.account.reserved_kopecks, '30000');
+assert.equal(debit.account.available_kopecks, '0');
+const { json: supplierAfter } = await supplier.request('/api/v1/organisations/me');
+assert.deepEqual(supplierAfter.account, supplierAccount.account, 'Reserve and operator debit must not pay the supplier');
+const moneyState = { email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey, reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
+if (stateFile && !previousState?.money) {
+  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-deal-reserves-smoke-v2', money: moneyState };
+  writeFileSync(stateFile, JSON.stringify(saved), { flag: previousState ? 'w' : 'wx', mode: 0o600 });
 }
 
 for (const client of [unauthenticated, customer, supplier, operator]) {
@@ -237,4 +308,4 @@ for (const client of [unauthenticated, customer, supplier, operator]) {
   await revoked.request('/api/v1/auth/me', { expected: 401 });
 }
 
-console.log('Deal drafts smoke passed: auth/CSRF, scoped create/list/card, replay/conflict/concurrent create, unchanged balances, operator isolation, persisted draft replay when state file exists, server logout.');
+console.log('Deal reserve smoke passed: auth/CSRF, scoped drafts, private PDF, two explicit consents, atomic reserve, balanced demo credit/debit, protected available funds, unchanged seed/supplier balances, restart persistence and exact command replay when state file exists, server logout.');

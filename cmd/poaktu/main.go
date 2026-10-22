@@ -27,6 +27,9 @@ import (
 	orgrepo "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/repository/postgres"
 	orgservice "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/service"
 	orghttp "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/transport/http"
+	settlementrepo "github.com/Adopten123/digital-ruble-deals/internal/features/settlement/repository/postgres"
+	settlementservice "github.com/Adopten123/digital-ruble-deals/internal/features/settlement/service"
+	settlementhttp "github.com/Adopten123/digital-ruble-deals/internal/features/settlement/transport/http"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -128,6 +131,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 	authHandler.RegisterRoutes(mux)
 	orghttp.New(organizationService).RegisterRoutes(mux, authHandler.Require)
 	dealhttp.New(dealservice.New(dealrepo.New(pool), key, files), csrf).RegisterRoutes(mux, authHandler.Require)
+	settlementhttp.New(settlementservice.New(settlementrepo.New(pool), key), csrf).RegisterRoutes(mux, authHandler.Require)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.JSON(w, 200, map[string]string{"status": "ok", "contour": "test"})
 	})
@@ -138,7 +142,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "deal_agreement"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "deal_reserves"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")

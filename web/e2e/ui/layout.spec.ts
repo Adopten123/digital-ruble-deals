@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import type { Organisation } from '../../src/lib/api.ts';
 import { test, expect, API_BASE_URL, E2E_BASE_URL, apiFor, csrf, draftInput, postDraft } from '../support.ts';
@@ -16,12 +17,24 @@ let longState: Awaited<ReturnType<APIRequestContext['storageState']>>;
 let dealId = '';
 
 test.beforeAll(async ({ playwright }) => {
+  // The complete suite shares the proxy's auth budget. Only this setup hook
+  // needs room to respect an explicit 60-second Retry-After from the server.
+  test.setTimeout(90_000);
   const registration = await playwright.request.newContext({ baseURL: API_BASE_URL, maxRedirects: 0, storageState: { cookies: [], origins: [] } });
   try {
-    const response = await registration.post('/api/v1/auth/register', {
-      headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(registration) },
-      data: { email: `layout-${unique}@demo.poaktu.local`, password: 'LayoutSyntheticOnly2026!', organisation: { name: longName, kind: 'COMPANY' } },
-    });
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      response = await registration.post('/api/v1/auth/register', {
+        headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(registration) },
+        data: { email: `layout-${unique}@demo.poaktu.local`, password: 'LayoutSyntheticOnly2026!', organisation: { name: longName, kind: 'COMPANY' } },
+      });
+      if (response.status() !== 429 || attempt === 1) break;
+      expect((await response.json()).error.code).toBe('RATE_LIMITED');
+      const seconds = Number(response.headers()['retry-after']);
+      expect(Number.isInteger(seconds) && seconds >= 1 && seconds <= 60).toBe(true);
+      await test.step(`respect layout setup auth budget: wait ${seconds}s`, async () => { await delay(seconds * 1000); });
+    }
+    if (!response) throw new Error('Layout registration did not run');
     expect(response.status()).toBe(201);
     longOrganisation = (await response.json()).organisation;
     longState = await registration.storageState();

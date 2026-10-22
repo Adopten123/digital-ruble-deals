@@ -12,6 +12,7 @@ import (
 	corepg "github.com/Adopten123/digital-ruble-deals/internal/core/repository/postgres"
 	"github.com/Adopten123/digital-ruble-deals/internal/core/security"
 	"github.com/Adopten123/digital-ruble-deals/internal/features/deals/service"
+	"github.com/Adopten123/digital-ruble-deals/internal/features/settlement/ledger"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -96,7 +97,7 @@ func (r *Repository) Mutate(ctx context.Context, cmd service.Mutation) (out serv
 			out = service.Failure{Status: status, Code: code, Message: message}.Result(cmd.Actor.RequestID)
 			return persist(false, cmd.Operation+"_REJECTED", now)
 		}
-		customerOnly := cmd.Operation == "PATCH_DEAL" || cmd.Operation == "UPLOAD_DOCUMENT" || cmd.Operation == "GENERATE_DOCUMENT"
+		customerOnly := cmd.Operation == "PATCH_DEAL" || cmd.Operation == "UPLOAD_DOCUMENT" || cmd.Operation == "GENERATE_DOCUMENT" || cmd.Operation == "RESERVE_DEAL"
 		if customerOnly && cmd.Actor.OrganizationID != d.CustomerPartyID {
 			return reject(403, "FORBIDDEN", "Это действие доступно заказчику")
 		}
@@ -116,6 +117,81 @@ func (r *Repository) Mutate(ctx context.Context, cmd service.Mutation) (out serv
 		changed := false
 		event := cmd.Operation
 		switch cmd.Operation {
+		case "RESERVE_DEAL":
+			if rawStatus != "AGREED" {
+				return reject(409, "INVALID_STATE", "Резервирование доступно после двух согласий")
+			}
+			if d.Document == nil {
+				return reject(409, "DOCUMENT_REQUIRED", "Нет актуального PDF")
+			}
+			if d.Document.DealID != d.ID || d.Document.DealVersion != d.DealVersion {
+				return reject(409, "DOCUMENT_MISMATCH", "PDF не соответствует условиям")
+			}
+			consent := map[string]bool{}
+			for _, a := range d.Agreements {
+				if a.DealVersion == d.DealVersion && a.DocumentID == d.Document.ID && a.DocumentVersion == d.Document.DocumentVersion && a.DocumentSHA256 == d.Document.SHA256 {
+					consent[a.OrganisationID] = true
+				}
+			}
+			if !consent[d.CustomerPartyID] || !consent[d.SupplierPartyID] {
+				return reject(422, "CONSENTS_MISSING", "Нужны два согласия текущих условий и PDF")
+			}
+			var storage, accountID string
+			if e = tx.QueryRow(ctx, `SELECT storage_key FROM document_versions WHERE document_id=$1 AND document_version=$2`, d.Document.ID, d.Document.DocumentVersion).Scan(&storage); e != nil {
+				return e
+			}
+			if cmd.VerifyDocument == nil {
+				return errors.New("document verifier unavailable")
+			}
+			if e = cmd.VerifyDocument(*d.Document, storage); e != nil {
+				return e
+			}
+			if e = tx.QueryRow(ctx, `SELECT id FROM accounts WHERE organization_id=$1`, d.CustomerPartyID).Scan(&accountID); e != nil {
+				return e
+			}
+			accounts, e := ledger.Lock(ctx, tx, accountID)
+			if e != nil {
+				return e
+			}
+			account := accounts[accountID]
+			var existing string
+			// Reserves are immutable at this stage; the held aggregate lock and
+			// unique deal_id serialize insertion without granting UPDATE facts.
+			e = tx.QueryRow(ctx, `SELECT id FROM reserves WHERE deal_id=$1`, d.ID).Scan(&existing)
+			if e == nil {
+				return reject(409, "INVALID_STATE", "Средства уже зарезервированы")
+			}
+			if !errors.Is(e, pgx.ErrNoRows) {
+				return e
+			}
+			if e = clock(); e != nil {
+				return e
+			}
+			if !d.DeadlineAt.After(now) {
+				return reject(422, "DEADLINE_PASSED", "Срок сделки уже наступил")
+			}
+			amount, _ := strconv.ParseInt(d.AmountKopecks, 10, 64)
+			e = ledger.CanReserve(account, amount)
+			if errors.Is(e, ledger.ErrInsufficient) {
+				return reject(422, "INSUFFICIENT_AVAILABLE_FUNDS", "Недостаточно доступных тестовых средств")
+			}
+			if e != nil {
+				return e
+			}
+			id, e := security.ID()
+			if e != nil {
+				return e
+			}
+			r := service.Reserve{ID: id, DealID: d.ID, DealVersion: d.DealVersion, AccountID: accountID, AmountKopecks: d.AmountKopecks, Currency: d.Currency, Status: "ACTIVE", CreatedAt: now}
+			if _, e = tx.Exec(ctx, `INSERT INTO reserves(id,deal_id,deal_version,account_id,customer_party_id,supplier_party_id,document_id,document_version,document_sha256,amount_kopecks,currency,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, id, d.ID, d.DealVersion, accountID, d.CustomerPartyID, d.SupplierPartyID, d.Document.ID, d.Document.DocumentVersion, d.Document.SHA256, amount, d.Currency, now); e != nil {
+				return e
+			}
+			if _, e = tx.Exec(ctx, `UPDATE accounts SET reserved_kopecks=reserved_kopecks+$2 WHERE id=$1`, accountID, amount); e != nil {
+				return e
+			}
+			d.Reserve = &r
+			d.Status = "FUNDED"
+			event = "DEAL_RESERVED"
 		case "PATCH_DEAL":
 			if rawStatus != "DRAFT" {
 				return reject(409, "INVALID_STATE", "Редактирование доступно только в черновике")
@@ -258,10 +334,13 @@ func (r *Repository) Mutate(ctx context.Context, cmd service.Mutation) (out serv
 			docID = &d.Document.ID
 			docVersion = &d.Document.DocumentVersion
 		}
-		if _, e = tx.Exec(ctx, `UPDATE deals SET deal_version=$2,row_version=row_version+1,status=$3,current_document_id=$4,current_document_version=$5,updated_at=$6 WHERE id=$1`, d.ID, d.DealVersion, d.Status, docID, docVersion, now); e != nil {
+		if _, e = tx.Exec(ctx, `UPDATE deals SET deal_version=$2,row_version=row_version+1,status=$3,current_document_id=$4,current_document_version=$5,updated_at=$6,first_reserved_at=CASE WHEN $7 THEN $6 ELSE first_reserved_at END WHERE id=$1`, d.ID, d.DealVersion, d.Status, docID, docVersion, now, cmd.Operation == "RESERVE_DEAL"); e != nil {
 			return e
 		}
-		if cmd.Prepare != nil {
+		if cmd.Operation == "RESERVE_DEAL" {
+			out.Status = 201
+			out.Body, e = json.Marshal(map[string]any{"reserve": d.Reserve, "deal": d})
+		} else if cmd.Prepare != nil {
 			out.Status = 201
 			out.Body, e = json.Marshal(map[string]any{"deal": d, "document": d.Document})
 		} else {
