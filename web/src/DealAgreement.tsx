@@ -2,14 +2,16 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, describeError } from './lib/api';
 import type { Counterparty, Deal } from './lib/api';
-import { agreementStorageKey, agreeDealInput, definitiveAgreementFailure, pdfIdentity, readPendingAgreement, removePendingAgreement, reworkDealInput, updateDealInput, verifyPendingPdf } from './lib/agreement';
+import { agreementStorageKey, agreeDealInput, definitiveAgreementFailure, pdfIdentity, readPendingAgreement, removePendingAgreement, reserveDealInput, reworkDealInput, updateDealInput, verifyPendingPdf } from './lib/agreement';
 import type { AgreementCommand, PendingAgreement } from './lib/agreement';
 import { localDateTime, plainRubles } from './lib/deals';
 import SupplierPicker from './SupplierPicker';
+import DealReserve from './DealReserve';
 
 interface Props { deal: Deal; ownId: string; onDeal: (deal: Deal) => void; onUnauthorized: (error: unknown) => void }
 const commandLabels: Record<AgreementCommand['kind'], string> = {
   update: 'изменение условий', upload: 'загрузка PDF', generate: 'формирование акта', agree: 'согласование документа', rework: 'возврат на доработку',
+  reserve: 'резервирование средств',
 };
 
 export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: Props) {
@@ -17,6 +19,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
   const [storageError, setStorageError] = useState<unknown>(null);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState('');
+  const [balanceRevision, setBalanceRevision] = useState(0);
   const [refreshRequired, setRefreshRequired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -49,7 +52,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
     && item.document_id === document.id && item.document_version === document.document_version && item.document_sha256 === document.sha256) : [];
   const hasAgreed = currentAgreements.some(item => item.organisation_id === ownId);
   const pendingVersion = pending ? pending.kind === 'update' ? pending.input.expected_version
-    : pending.kind === 'agree' || pending.kind === 'rework' ? pending.input.deal_version : pending.input.expected_deal_version : null;
+    : pending.kind === 'agree' || pending.kind === 'rework' || pending.kind === 'reserve' ? pending.input.deal_version : pending.input.expected_deal_version : null;
 
   async function run(command?: AgreementCommand) {
     if (busy || storageError != null) return;
@@ -81,6 +84,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
         case 'generate': await api.generateDocument(attempt.dealId, attempt.input, attempt.key); break;
         case 'agree': await api.agreeDeal(attempt.dealId, attempt.input, attempt.key); break;
         case 'rework': await api.reworkDeal(attempt.dealId, attempt.input, attempt.key); break;
+        case 'reserve': await api.reserveDeal(attempt.dealId, attempt.input, attempt.key); break;
         case 'upload': await api.uploadDocument(attempt.dealId, attempt.input.expected_deal_version, file!, attempt.input.file_name, attempt.key); break;
       }
       // A cached idempotent reply can describe an earlier version. Always read current server state.
@@ -89,14 +93,15 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
       setPending(null); setEditing(false); setReworking(false); setReason(''); setConsent(false);
       setNotice('Команда подтверждена сервером.');
       const actual = await api.deal(attempt.dealId);
-      if (isCurrent()) onDeal(actual);
+      if (isCurrent()) { onDeal(actual); if (attempt.kind === 'reserve') setBalanceRevision(value => value + 1); }
     } catch (failure) {
       if (attempt && definitiveAgreementFailure(failure)) {
         try { removePendingAgreement(sessionStorage, ownId, attempt.dealId, attempt.key); if (isCurrent()) setPending(null); }
         catch (storageFailure) { if (isCurrent()) setStorageError(storageFailure); }
       }
       if (isCurrent()) {
-        if (failure instanceof ApiError && ['VERSION_CONFLICT', 'INVALID_STATE', 'DEADLINE_PASSED'].includes(failure.code)) setRefreshRequired(true);
+        if (failure instanceof ApiError && ['VERSION_CONFLICT', 'INVALID_STATE', 'DEADLINE_PASSED', 'DOCUMENT_MISMATCH', 'CONSENTS_MISSING'].includes(failure.code)) setRefreshRequired(true);
+        if (attempt?.kind === 'reserve') setBalanceRevision(value => value + 1);
         setError(failure); onUnauthorized(failure);
       }
     } finally { if (isCurrent()) setBusy(false); }
@@ -136,7 +141,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
   }
 
   return <section className="panel agreement-panel" aria-label="Документ и согласование">
-    <div className="agreement-heading"><div><h3>Документ и согласование</h3><p className="muted">Сначала согласуйте одну версию условий и PDF. Средства пока свободны.</p></div>
+    <div className="agreement-heading"><div><h3>Документ и согласование</h3><p className="muted">{pending?.kind === 'reserve' ? 'Результат резервирования уточняется. Средства могли быть закреплены; проверьте прежнюю команду.' : deal.reserve ? 'Условия и PDF закреплены резервом. Исполнителю средства пока не выплачены.' : 'Сначала согласуйте одну версию условий и PDF. Средства пока свободны.'}</p></div>
       {customer && deal.status === 'DRAFT' && <button className="button button-quiet" type="button" disabled={locked || expired} onClick={() => setEditing(value => !value)}>Редактировать условия</button>}
     </div>
     {storageError != null && <div className="notice notice-error" role="alert">{describeError(storageError)}</div>}
@@ -169,13 +174,14 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
     <div className="agreement-consents"><h4>Согласия сторон на текущую версию</h4>
       <ul>{[deal.customer, deal.supplier].map(party => { const agreement = currentAgreements.find(item => item.organisation_id === party.id); return <li key={party.id}><div><strong>{party.name}</strong><span>{party.id === deal.customer_party_id ? 'Заказчик' : 'Исполнитель'}{party.id === ownId ? ' · Ваша организация' : ''}</span></div><span className={`tag${agreement ? ' agreement-confirmed' : ''}`}>{agreement ? 'Согласовано' : 'Ожидает согласия'}</span></li>; })}</ul>
       {active && document && !hasAgreed && !expired && <div className="agreement-confirm"><label className="checkbox-label" htmlFor={`${formId}-consent`}><input id={`${formId}-consent`} type="checkbox" checked={consent} disabled={locked} onChange={(event) => setConsent(event.target.checked)} /><span>Согласен с условиями версии {deal.deal_version} и PDF версии {document.document_version}. Проверил стороны, сумму, срок и содержание документа.</span></label><button className="button button-primary" type="button" disabled={locked || !consent} onClick={() => validateAndRun(() => ({ kind: 'agree', input: agreeDealInput(deal) }))}>Согласовать документ</button></div>}
-      {deal.status === 'AGREED' && <div className="notice notice-success"><strong>Обе стороны согласовали документ</strong><span>Это согласование условий, а не электронная подпись или выплата. Резервирование появится на следующем этапе.</span></div>}
+      {deal.status === 'AGREED' && <div className="notice notice-success"><strong>Обе стороны согласовали документ</strong><span>Это согласование условий, а не электронная подпись или выплата. Заказчик может закрепить полную сумму резервом.</span></div>}
       {deal.status === 'AGREED' && !expired && <><button className="text-button" type="button" disabled={locked} onClick={() => setReworking(value => !value)}>Вернуть на доработку</button>
         {reworking && <form className="rework-form" onSubmit={(event) => { event.preventDefault(); validateAndRun(() => ({ kind: 'rework', input: reworkDealInput(deal, reason) })); }}><label htmlFor={`${formId}-reason`}>Причина доработки</label><textarea id={`${formId}-reason`} value={reason} disabled={locked} onChange={(event) => setReason(event.target.value)} maxLength={4000} required rows={3} /><p className="field-help">До 2 000 символов. Активный PDF и согласия будут сняты; история сохранится. Нужны новый документ и два новых согласия.</p><button className="button button-primary" type="submit" disabled={locked}>Подтвердить возврат на доработку</button></form>}
       </>}
-      {!active && <p className="field-help">Изменение условий и согласование закрыты. Ситуация требует проверки сторонами.</p>}
+      {!active && <p className="field-help">{deal.reserve ? 'Изменение условий и согласование закрыты после резервирования.' : 'Изменение условий и согласование закрыты. Ситуация требует проверки сторонами.'}</p>}
       {expired && active && <p className="field-help">Срок наступил. Обновите карточку: автоматическое продолжение закрыто, выполнение работ не подтверждено.</p>}
     </div>
+    <DealReserve deal={deal} ownId={ownId} locked={locked} revision={balanceRevision} onReserve={() => validateAndRun(() => ({ kind: 'reserve', input: reserveDealInput(deal) }))} onUnauthorized={onUnauthorized} />
   </section>;
 }
 

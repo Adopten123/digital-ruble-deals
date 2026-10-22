@@ -13,7 +13,7 @@ const dateFormatter = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 
 function dateLabel(value: string): string { return dateFormatter.format(new Date(value)); }
 function Status({ deal }: { deal: Deal }) {
   return <span className={`deal-status${deal.status === 'REVIEW_REQUIRED' ? ' deal-status-review' : ''}`}>
-    <span aria-hidden="true" />{deal.status === 'REVIEW_REQUIRED' ? 'Требует проверки' : deal.status === 'AGREED' ? 'Согласовано' : 'Черновик'}
+    <span aria-hidden="true" />{deal.status === 'REVIEW_REQUIRED' ? 'Требует проверки' : deal.status === 'FUNDED' ? 'Средства зарезервированы' : deal.status === 'AGREED' ? 'Согласовано' : 'Черновик'}
   </span>;
 }
 function Failure({ error, retry }: { error: unknown; retry?: () => void }) {
@@ -98,7 +98,7 @@ function DealList({ ownId, onOpen, onUnauthorized }: ScopeProps & { ownId: strin
     <form className="deal-filters panel" onSubmit={search} role="search" aria-label="Поиск сделок">
       <div className="deal-search-row"><label className="visually-hidden" htmlFor={`${formId}-query`}>Поиск по названию, ID или контрагенту</label><div className="search-field"><span aria-hidden="true">⌕</span><input id={`${formId}-query`} value={query} onChange={(event) => setQuery(event.target.value)} maxLength={400} placeholder="Название, ID или контрагент" /></div><button className="button button-primary" type="submit" disabled={loading}>Найти</button></div>
       <div className="deal-filter-fields">
-        <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option><option value="DRAFT">Черновик</option><option value="AGREED">Согласовано</option><option value="REVIEW_REQUIRED">Требует проверки</option></select></div>
+        <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option><option value="DRAFT">Черновик</option><option value="AGREED">Согласовано</option><option value="FUNDED">Средства зарезервированы</option><option value="REVIEW_REQUIRED">Требует проверки</option></select></div>
         <div><label htmlFor={`${formId}-role`}>Моя роль</label><select id={`${formId}-role`} value={role} onChange={(event) => setRole(event.target.value as DealFilters['role'])}><option value="">Любая роль</option><option value="customer">Заказчик</option><option value="supplier">Исполнитель</option></select></div>
         <div><label htmlFor={`${formId}-from`}>Создана с</label><input type="date" id={`${formId}-from`} value={from} onChange={(event) => setFrom(event.target.value)} /></div>
         <div><label htmlFor={`${formId}-to`}>По дату включительно</label><input type="date" id={`${formId}-to`} value={to} onChange={(event) => setTo(event.target.value)} /></div>

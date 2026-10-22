@@ -24,6 +24,20 @@ export interface OwnOrganisation {
   };
 }
 
+export interface DemoAccount {
+  id: string;
+  organisation: { id: string; name: string; kind: OrganisationKind };
+  currency: 'RUB'; total_kopecks: string; reserved_kopecks: string; available_kopecks: string;
+}
+export interface DemoMoneyInput { amount_kopecks: string; reason: string }
+export interface DemoMoneyResult { transaction_id: string; account: DemoAccount }
+export interface DealReserve {
+  id: string; deal_id: string; deal_version: number; account_id: string;
+  amount_kopecks: string; currency: 'RUB'; status: 'ACTIVE'; created_at: string;
+}
+export interface ReserveDealInput { deal_version: number }
+export interface ReserveResult { reserve: DealReserve; deal: Deal }
+
 export interface Counterparty {
   id: string;
   name: string;
@@ -72,14 +86,14 @@ export interface DocumentResult { deal: Deal; document: DealDocument }
 export interface Deal extends CreateDealInput {
   id: string;
   deal_version: number;
-  status: 'DRAFT' | 'AGREED' | 'REVIEW_REQUIRED';
+  status: 'DRAFT' | 'AGREED' | 'FUNDED' | 'REVIEW_REQUIRED';
   customer_party_id: string;
   customer: DealParty;
   supplier: DealParty;
   document: DealDocument | null;
   agreements: DealAgreement[];
   signatures: unknown[];
-  reserve: null;
+  reserve: DealReserve | null;
   payment_id: null;
   dispute: null;
   cancellation_request: null;
@@ -89,7 +103,7 @@ export interface Deal extends CreateDealInput {
 
 export interface DealFilters {
   q?: string;
-  status?: '' | 'DRAFT' | 'AGREED' | 'REVIEW_REQUIRED';
+  status?: '' | 'DRAFT' | 'AGREED' | 'FUNDED' | 'REVIEW_REQUIRED';
   role?: '' | 'customer' | 'supplier';
   created_from?: string;
   created_to?: string;
@@ -118,9 +132,12 @@ const errorMessages: Record<string, string> = {
   INVALID_STATE: 'Действие недоступно в текущем состоянии. Обновите сделку.',
   DOCUMENT_REQUIRED: 'Сначала добавьте PDF для актуальной версии условий.',
   INVALID_PDF: 'Файл не прошёл проверку PDF. Выберите корректный документ.',
+  INVALID_DOCUMENT: 'Файл не прошёл проверку PDF. Выберите корректный документ без активного содержимого.',
   PAYLOAD_TOO_LARGE: 'Файл слишком большой. Максимальный размер PDF — 5 МиБ.',
   UNSUPPORTED_MEDIA_TYPE: 'Нужен PDF-документ. Выберите файл с расширением .pdf.',
   CONSENTS_MISSING: 'Для следующего действия нужны согласия обеих сторон на актуальный документ.',
+  DOCUMENT_MISMATCH: 'Документ или его версия изменились. Обновите карточку перед следующим действием.',
+  INSUFFICIENT_AVAILABLE_FUNDS: 'Недостаточно доступных тестовых средств. Обновите остатки; активные резервы нельзя расходовать.',
 };
 
 export class ApiError extends Error {
@@ -278,6 +295,17 @@ export class ApiClient {
   }
   reworkDeal(id: string, input: ReworkDealInput, key: string): Promise<Deal> {
     return this.mutate(`/deals/${encodeURIComponent(id)}/rework`, input, key, true);
+  }
+  reserveDeal(id: string, input: ReserveDealInput, key: string): Promise<ReserveResult> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/reserve`, input, key, true);
+  }
+  demoAccounts(query: string, cursor?: string): Promise<Page<DemoAccount>> {
+    const params = new URLSearchParams({ q: query, limit: '20' });
+    if (cursor) params.set('cursor', cursor);
+    return this.request(`/demo/accounts?${params}`, { headers: this.identityHeaders() });
+  }
+  demoMoney(accountId: string, operation: 'credits' | 'debits', input: DemoMoneyInput, key: string): Promise<DemoMoneyResult> {
+    return this.mutate(`/demo/accounts/${encodeURIComponent(accountId)}/${operation}`, input, key, true);
   }
   document(id: string, version?: number): Promise<DealDocument> {
     return this.request(`/documents/${encodeURIComponent(id)}${version === undefined ? '' : `?version=${version}`}`, { headers: this.identityHeaders() });

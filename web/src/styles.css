@@ -1586,6 +1586,30 @@ textarea { resize:vertical; line-height:1.65 }
 .agreement-confirm { margin:18px 0 22px }
 .agreement-confirm>.button,.rework-form>.button { font-size:12px; white-space:normal; max-width:100% }
 .rework-form { margin-top:20px }
+.deal-reserve { margin-top:24px; padding-top:24px; border-top:1px solid var(--border) }
+.reserve-total { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; margin:18px 0; font-size:12px }
+.reserve-total>strong { font-size:23px; overflow-wrap:anywhere; min-width:0 }
+.reserve-balance-heading { display:flex; align-items:center; justify-content:space-between; gap:15px; margin:22px 0 13px }
+.reserve-balance-heading h5 { margin:0; font-size:13px }
+.reserve-balance-heading>.text-button { font-size:11px; flex:none }
+.reserve-balances { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:18px 0 22px }
+.reserve-balances>div { min-width:0; border:1px solid var(--border); background:#f6f9fd; padding:15px; border-radius:10px }
+.reserve-balances dt { font-size:11px; color:var(--muted); margin-bottom:10px }
+.reserve-balances dd { margin:0; font-size:17px; font-weight:650; overflow-wrap:anywhere }
+.reserve-submit { font-size:12px; max-width:100%; white-space:normal }
+.demo-account-list { display:grid; gap:12px }
+.demo-account-row { width:100%; padding:20px; display:flex; align-items:center; justify-content:space-between; gap:20px; text-align:left; color:var(--navy) }
+.demo-account-row.selected { border-color:var(--blue) }
+.demo-account-row>div { min-width:0 }
+.demo-account-row>div:last-child { text-align:right; flex:none; max-width:48% }
+.demo-account-row strong,.demo-account-row code,.demo-account-row small,.demo-account-row span { display:block; overflow-wrap:anywhere }
+.demo-account-row code,.demo-account-row small { font-size:10px; color:var(--muted); margin-top:6px }
+.demo-account-row span { font-size:11px; color:var(--muted) }
+.demo-account-row strong { font-size:15px; margin:4px 0 }
+.demo-money-panel { margin-top:25px; padding:26px; overflow-wrap:anywhere; min-width:0 }
+.demo-money-panel .agreement-heading h3 { margin-bottom:10px }
+.demo-money-panel form>.button { margin-top:20px; font-size:12px; max-width:100%; white-space:normal }
+.demo-accounts>.notice>.button { align-self:flex-start; font-size:12px; max-width:100%; white-space:normal }
 @media(max-width:700px) {
   .agreement-panel { padding:22px }
   .agreement-heading { flex-direction:column; gap:15px }
@@ -1597,4 +1621,14 @@ textarea { resize:vertical; line-height:1.65 }
   .agreement-consents li { align-items:flex-start; flex-direction:column; gap:10px }
   .agreement-consents li>.tag { max-width:100% }
   .agreement-confirm>.button,.rework-form>.button { width:100%; justify-content:center }
+  .reserve-balances { grid-template-columns:1fr; gap:9px }
+  .reserve-balances>div { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:14px }
+  .reserve-balances dt { margin:0 }
+  .reserve-balances dd { font-size:17px; text-align:right }
+  .reserve-balance-heading { align-items:flex-start; flex-direction:column; gap:10px }
+  .reserve-submit { width:100%; justify-content:center }
+  .demo-account-row { align-items:flex-start; flex-direction:column; gap:12px; padding:18px }
+  .demo-account-row>div:last-child { text-align:left; max-width:100%; width:100% }
+  .demo-money-panel { padding:20px }
+  .demo-money-panel form>.button { width:100%; justify-content:center }
 }
