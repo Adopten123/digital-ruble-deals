@@ -10,6 +10,7 @@
 | Открыть интерактивный Swagger | `/api-docs/` на origin запущенного приложения; инструкция в справочнике API |
 | Разрабатывать frontend | [FRONTEND.md](FRONTEND.md), [web/README.md](../web/README.md) |
 | Проверить приложение | [TESTING.md](TESTING.md), [MANUAL_TESTING.md](MANUAL_TESTING.md) |
+| Посмотреть последний ручной прогон | [Повторная проверка двух резервов: 16 PASS / 1 BLOCKED](reports/2026-10-22-reserve-recheck.md) |
 | Продолжить работу по ТЗ | [HANDOFF.md](HANDOFF.md), [TZ.md](TZ.md), [BACKLOG.md](BACKLOG.md) |
 | Изучить устройство backend и транзакций | [ARCHITECTURE.md](ARCHITECTURE.md), [DATA_MODEL.md](DATA_MODEL.md), [REFERENCE_ARCHITECTURE.md](REFERENCE_ARCHITECTURE.md) |
 | Изучить целевой контракт ещё не реализованных функций | [API.md](API.md), [STATE_MACHINE.md](STATE_MACHINE.md) |
