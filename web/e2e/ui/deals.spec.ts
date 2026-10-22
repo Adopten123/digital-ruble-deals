@@ -48,7 +48,8 @@ test('create stores exact kopecks and UTC; both participants see the card and an
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   await expect(page.locator('.deal-condition-amount strong')).toHaveText('90 071 992 547 409,93 ₽');
   await expect(page.locator('.deal-detail-heading')).toContainText('Версия 1 · Вы — заказчик');
-  await expect(page.locator('.deal-progress')).toContainText('Согласований: 0 · Подписей: 0');
+  await expect(page.getByRole('region', { name: 'Документ и согласование' })).toContainText('Согласия сторон на текущую версию');
+  await expect(page.locator('.agreement-consents .tag')).toHaveText(['Ожидает согласия', 'Ожидает согласия']);
   await page.getByRole('button', { name: '← К списку сделок' }).click();
   await expect(page.locator('.deal-row').filter({ hasText: title })).toHaveCount(1);
 

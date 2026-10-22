@@ -96,7 +96,9 @@ async function inspectLayout(page: Page, state: string, info: TestInfo) {
     siblings('.deal-detail-heading', [':scope > div', ':scope > button']);
     siblings('.deal-detail-grid', ['.deal-conditions', '.deal-parties']);
     siblings('.deal-facts > div', ['dt', 'dd'], true);
-    siblings('.deal-progress', ['.section-icon', ':scope > div:nth-child(2)', ':scope > .tag']);
+    siblings('.agreement-heading', [':scope > div', ':scope > button']);
+    siblings('.document-facts > div', ['dt', 'dd'], true);
+    siblings('.agreement-consents li', [':scope > div', ':scope > .tag']);
     for (const element of document.querySelectorAll('input, select, textarea, button, .brand')) {
       if (!visible(element)) continue;
       const box = element.getBoundingClientRect();
@@ -105,7 +107,7 @@ async function inspectLayout(page: Page, state: string, info: TestInfo) {
     // Check the actual glyphs clipped by hidden overflow. An overflowing code box
     // with fully visible UUID text is not a visual defect. Scrollable pickers are
     // intentionally excluded: their offscreen options must remain scrollable.
-    const texts = 'h1, h2, h3, .brand-caption, .readiness, .logout, .balance-card > strong, .balance-card > p, .counterparty h3, .counterparty > code, .deal-row h3, .deal-row p, .deal-row-amount > strong, .deal-description, .deal-party > strong, .deal-progress p, .deal-progress > .tag, .next-stage > p, .next-stage > .tag';
+    const texts = 'h1, h2, h3, .brand-caption, .readiness, .logout, .balance-card > strong, .balance-card > p, .counterparty h3, .counterparty > code, .deal-row h3, .deal-row p, .deal-row-amount > strong, .deal-description, .deal-party > strong, .agreement-heading p, .agreement-consents strong, .agreement-consents .tag, .document-hash, .next-stage > p, .next-stage > .tag';
     for (const element of document.querySelectorAll(texts)) {
       if (!visible(element)) continue;
       const rectangles = textRects(element);

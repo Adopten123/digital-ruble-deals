@@ -187,7 +187,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
         <span className="process-line" aria-hidden="true" />
         <div><span className="step-number">03</span><strong>Подписать</strong><p>Две подписи и проверка условий расчёта</p></div>
       </div>
-      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте черновики сделок и просматривайте условия вместе с контрагентом. Согласование, резервы и подписи появятся в следующих обновлениях.</p>
+      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте сделки, добавляйте PDF и согласуйте актуальную версию с контрагентом. Резервы, подписи и расчёты появятся в следующих обновлениях.</p>
     </section>
     <section className="auth-card panel" aria-label="Доступ в приложение">
       <div className="auth-tabs" aria-label="Выбор формы">
@@ -300,7 +300,7 @@ function Account({ session, onUnauthorized }: { session: Session; onUnauthorized
     </section>
     <div className="overview-grid">
       <section className="panel next-stage"><div className="section-icon" aria-hidden="true">↗</div><span className="tag">Следующий этап</span><h2>От условий к расчёту</h2>
-        <p>Создание и просмотр черновиков уже доступны в разделе «Сделки». Далее появятся согласование условий, PDF, резервирование и две тестовые подписи.</p>
+        <p>В разделе «Сделки» доступны условия, PDF и согласование обеими сторонами. Следующий этап — резервирование, две тестовые подписи и расчёт по проверенному событию.</p>
         <div className="future-flow"><span>Согласование</span><span aria-hidden="true">→</span><span>Резерв</span><span aria-hidden="true">→</span><span>Две подписи</span><span aria-hidden="true">→</span><span>Расчёт</span></div>
       </section>
       <section className="panel organisation-info"><h2>Ваша организация</h2><dl><div><dt>Название</dt><dd>{session.organisation?.name}</dd></div><div><dt>Идентификатор</dt><dd><code>{session.organisation?.id}</code></dd></div><div><dt>Доступ</dt><dd>Владелец учебной организации</dd></div></dl><p className="field-help">Права проверяются сервером для каждого запроса.</p></section>

@@ -53,15 +53,31 @@ export interface CreateDealInput {
 
 export interface DealParty { id: string; name: string; kind: OrganisationKind }
 
+export interface DealDocument {
+  id: string; deal_id: string; deal_version: number; document_version: number;
+  sha256: string; file_name: string; size_bytes: number; content_type: string; created_at: string;
+}
+
+export interface DealAgreement {
+  id: string; organisation_id: string; user_id: string; deal_version: number;
+  document_id: string; document_version: number; document_sha256: string; created_at: string;
+}
+
+export interface UpdateDealInput extends Partial<CreateDealInput> { expected_version: number }
+export interface AgreeDealInput { deal_version: number; document_id: string; document_version: number; document_sha256: string }
+export interface ReworkDealInput { deal_version: number; reason: string }
+export interface GenerateDocumentInput { expected_deal_version: number; template_id: 'printing-acceptance-v1' }
+export interface DocumentResult { deal: Deal; document: DealDocument }
+
 export interface Deal extends CreateDealInput {
   id: string;
   deal_version: number;
-  status: 'DRAFT' | 'REVIEW_REQUIRED';
+  status: 'DRAFT' | 'AGREED' | 'REVIEW_REQUIRED';
   customer_party_id: string;
   customer: DealParty;
   supplier: DealParty;
-  document: null;
-  agreements: unknown[];
+  document: DealDocument | null;
+  agreements: DealAgreement[];
   signatures: unknown[];
   reserve: null;
   payment_id: null;
@@ -73,7 +89,7 @@ export interface Deal extends CreateDealInput {
 
 export interface DealFilters {
   q?: string;
-  status?: '' | 'DRAFT' | 'REVIEW_REQUIRED';
+  status?: '' | 'DRAFT' | 'AGREED' | 'REVIEW_REQUIRED';
   role?: '' | 'customer' | 'supplier';
   created_from?: string;
   created_to?: string;
@@ -98,6 +114,13 @@ const errorMessages: Record<string, string> = {
   IDEMPOTENCY_KEY_REQUIRED: 'Не удалось подтвердить ключ создания сделки. Обновите страницу.',
   IDEMPOTENCY_CONFLICT: 'Этот запрос уже использован для других условий. Обновите список и проверьте созданную сделку.',
   COMMIT_OUTCOME_UNKNOWN: 'Ответ о сохранении не получен. Повторите тот же запрос для проверки результата.',
+  VERSION_CONFLICT: 'Условия или документ уже изменились. Обновите сделку и согласуйте актуальную версию.',
+  INVALID_STATE: 'Действие недоступно в текущем состоянии. Обновите сделку.',
+  DOCUMENT_REQUIRED: 'Сначала добавьте PDF для актуальной версии условий.',
+  INVALID_PDF: 'Файл не прошёл проверку PDF. Выберите корректный документ.',
+  PAYLOAD_TOO_LARGE: 'Файл слишком большой. Максимальный размер PDF — 5 МиБ.',
+  UNSUPPORTED_MEDIA_TYPE: 'Нужен PDF-документ. Выберите файл с расширением .pdf.',
+  CONSENTS_MISSING: 'Для следующего действия нужны согласия обеих сторон на актуальный документ.',
 };
 
 export class ApiError extends Error {
@@ -154,6 +177,8 @@ export class ApiClient {
     this.userId = userId;
   }
 
+  currentIdentity(): string | null { return this.userId; }
+
   async csrf(): Promise<string> {
     if (this.token) return this.token;
     if (!this.tokenRequest) {
@@ -193,12 +218,12 @@ export class ApiClient {
     return userId ? { 'X-Expected-User-ID': userId } : {};
   }
 
-  private async mutate<T>(path: string, body?: unknown, idempotencyKey?: string, protectedRequest = false): Promise<T> {
+  private async mutate<T>(path: string, body?: unknown, idempotencyKey?: string, protectedRequest = false, method = 'POST'): Promise<T> {
     // Capture before awaiting CSRF: a later UI session change must not change this command's actor.
     const identityHeaders = protectedRequest ? this.identityHeaders() : {};
     const token = await this.csrf();
     return this.request<T>(path, {
-      method: 'POST',
+      method,
       headers: {
         ...identityHeaders,
         'X-CSRF-Token': token,
@@ -231,6 +256,45 @@ export class ApiClient {
     return this.request(`/deals?${params.toString()}`, { headers: this.identityHeaders() });
   }
   deal(id: string): Promise<Deal> { return this.request(`/deals/${encodeURIComponent(id)}`, { headers: this.identityHeaders() }); }
+  updateDeal(id: string, input: UpdateDealInput, key: string): Promise<Deal> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}`, input, key, true, 'PATCH');
+  }
+  generateDocument(id: string, input: GenerateDocumentInput, key: string): Promise<DocumentResult> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/documents/generate`, input, key, true);
+  }
+  async uploadDocument(id: string, expectedVersion: number, file: Blob, fileName: string, key: string): Promise<DocumentResult> {
+    const identityHeaders = this.identityHeaders();
+    const token = await this.csrf();
+    const body = new FormData();
+    body.append('expected_deal_version', String(expectedVersion));
+    body.append('file', file, fileName);
+    return this.request(`/deals/${encodeURIComponent(id)}/documents`, {
+      method: 'POST', body,
+      headers: { ...identityHeaders, 'X-CSRF-Token': token, 'Idempotency-Key': key },
+    });
+  }
+  agreeDeal(id: string, input: AgreeDealInput, key: string): Promise<Deal> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/agree`, input, key, true);
+  }
+  reworkDeal(id: string, input: ReworkDealInput, key: string): Promise<Deal> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/rework`, input, key, true);
+  }
+  document(id: string, version?: number): Promise<DealDocument> {
+    return this.request(`/documents/${encodeURIComponent(id)}${version === undefined ? '' : `?version=${version}`}`, { headers: this.identityHeaders() });
+  }
+  async documentFile(id: string, version: number, download = false): Promise<Blob> {
+    const generation = this.tokenGeneration;
+    const response = await this.fetcher(`/api/v1/documents/${encodeURIComponent(id)}/${download ? 'download' : 'view'}?version=${version}`, {
+      credentials: 'same-origin', headers: { ...this.identityHeaders(), Accept: 'application/pdf' },
+    });
+    if (!response.ok) {
+      const error = parseApiError(response.status, await response.json().catch(() => null));
+      if (generation === this.tokenGeneration && (error.code === 'CSRF_INVALID' || error.code === 'SESSION_CHANGED' || response.status === 401)) this.clearCsrf();
+      throw error;
+    }
+    if (!response.headers.get('Content-Type')?.toLowerCase().startsWith('application/pdf')) throw new Error('Сервер вернул файл неизвестного формата. PDF не открыт.');
+    return response.blob();
+  }
 }
 
 export const api = new ApiClient();

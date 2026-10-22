@@ -40,10 +40,10 @@ test('375px detail progress text and create form fit the viewport without horizo
   await expect(page.locator('.deal-row').filter({ hasText: title })).toBeVisible();
   await page.locator('.deal-row').filter({ hasText: title }).click();
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
-  const progress = page.locator('.deal-progress');
-  await expect(progress.getByRole('heading', { name: 'Условия сохранены. Средства свободны.' })).toBeVisible();
-  const text = progress.locator('p');
-  await expect(text).toContainText('создание черновика не означает согласие исполнителя');
+  const progress = page.locator('.agreement-panel');
+  await expect(progress.getByRole('heading', { name: 'Документ и согласование' })).toBeVisible();
+  const text = progress.locator('.agreement-heading p');
+  await expect(text).toContainText('Средства пока свободны');
   const textBox = await text.boundingBox();
   expect(textBox!.width).toBeGreaterThan(240);
   expect(textBox!.x).toBeGreaterThanOrEqual(0);
