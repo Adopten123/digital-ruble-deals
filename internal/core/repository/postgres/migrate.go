@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const SchemaVersion = "002_deal_drafts.sql"
+const SchemaVersion = "003_deal_agreement.sql"
 
 func Migrate(ctx context.Context, uow UnitOfWork, dir string) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))

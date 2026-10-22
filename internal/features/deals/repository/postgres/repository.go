@@ -134,7 +134,9 @@ func (r *Repository) Create(ctx context.Context, cmd service.Command) (out servi
 const columns = `d.id,d.deal_version,
  CASE WHEN d.status IN ('SETTLED','CANCELLED','REFUNDED') THEN d.status WHEN v.deadline_at <= statement_timestamp() THEN 'REVIEW_REQUIRED' ELSE d.status END,
  v.customer_party_id,v.supplier_party_id,v.title,v.description,v.amount_kopecks::text,v.currency,v.deadline_at,
- c.id,c.name,c.kind,s.id,s.name,s.kind,d.created_at,d.updated_at`
+ c.id,c.name,c.kind,s.id,s.name,s.kind,d.created_at,d.updated_at,
+ (SELECT jsonb_build_object('id',dv.document_id,'deal_id',dv.deal_id,'deal_version',dv.deal_version,'document_version',dv.document_version,'sha256',dv.sha256,'file_name',dv.file_name,'size_bytes',dv.size_bytes,'content_type',dv.content_type,'created_at',to_char(dv.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM document_versions dv WHERE dv.document_id=d.current_document_id AND dv.document_version=d.current_document_version),
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'organisation_id',a.organization_id,'user_id',a.user_id,'deal_version',a.deal_version,'document_id',a.document_id,'document_version',a.document_version,'document_sha256',a.document_sha256,'created_at',to_char(a.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) ORDER BY a.created_at,a.id) FROM deal_agreements a WHERE a.deal_id=d.id AND a.deal_version=d.deal_version AND a.document_id=d.current_document_id AND a.document_version=d.current_document_version),'[]'::jsonb)`
 const joins = ` FROM deals d JOIN deal_versions v ON v.deal_id=d.id AND v.deal_version=d.deal_version
  JOIN organizations c ON c.id=v.customer_party_id JOIN organizations s ON s.id=v.supplier_party_id `
 const scope = ` EXISTS(SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.user_id=$1 AND m.organization_id=$2 AND m.role='ORG_OWNER' AND u.system_role='USER') AND ($2=v.customer_party_id OR $2=v.supplier_party_id) `
@@ -142,7 +144,14 @@ const scope = ` EXISTS(SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_i
 type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (d service.Deal, err error) {
-	err = row.Scan(&d.ID, &d.DealVersion, &d.Status, &d.CustomerPartyID, &d.SupplierPartyID, &d.Title, &d.Description, &d.AmountKopecks, &d.Currency, &d.DeadlineAt, &d.Customer.ID, &d.Customer.Name, &d.Customer.Kind, &d.Supplier.ID, &d.Supplier.Name, &d.Supplier.Kind, &d.CreatedAt, &d.UpdatedAt)
+	var document, agreements []byte
+	err = row.Scan(&d.ID, &d.DealVersion, &d.Status, &d.CustomerPartyID, &d.SupplierPartyID, &d.Title, &d.Description, &d.AmountKopecks, &d.Currency, &d.DeadlineAt, &d.Customer.ID, &d.Customer.Name, &d.Customer.Kind, &d.Supplier.ID, &d.Supplier.Name, &d.Supplier.Kind, &d.CreatedAt, &d.UpdatedAt, &document, &agreements)
+	if err == nil && len(document) > 0 {
+		err = json.Unmarshal(document, &d.Document)
+	}
+	if err == nil && len(agreements) > 0 {
+		err = json.Unmarshal(agreements, &d.Agreements)
+	}
 	d.Normalize()
 	return d, err
 }

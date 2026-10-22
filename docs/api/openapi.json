@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ПоАкту — реализованный HTTP API",
-    "version": "0.1.0",
-    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Спецификация содержит только 12 реализованных операций: авторизация, организации, черновики, health/readiness. Резервов, выплат, PDF, ЭДО, споров, уведомлений и A19 пока нет. Проектный контракт будущих функций — docs/API.md. Все денежные значения — целые копейки строками. JSON-команды до 16 KiB. Сессия HttpOnly pa_session, CSRF HttpOnly pa_csrf + заголовок X-CSRF-Token; изменяющим запросам нужен Origin ровно APP_ORIGIN. В Swagger вход в браузере использует cookie того же origin; не вводите Cookie вручную. Получите /auth/csrf, вставьте токен в Authorize → csrfToken; после login/register замените токен значением ответа. Документация не отправляет данные во внешний валидатор."
+    "version": "0.2.0",
+    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Все 20 реализованных операций: авторизация, организации, создание / изменение условий, версии PDF, два явных согласия, возврат на доработку и health/readiness. Согласование не является тестовой подписью или выплатой. Резерв, подписи после резерва, расчёты, ЭДО, споры, уведомления и A19 ещё не реализованы. Деньги — целые копейки строками, JSON до16KiB, PDF до5MiB. Cookie pa_session/pa_csrf + X-CSRF-Token и точный Origin=APP_ORIGIN; X-Expected-User-ID защищает от смены общей cookie в другой вкладке. После login/register обновить csrfToken в Authorize; cookie браузер передаёт сам. Все изменяющие предметные команды используют сохранённые тело и Idempotency-Key. Проектный контракт будущих функций — docs/API.md."
   },
   "servers": [
     {
@@ -22,7 +22,10 @@
       "name": "Организации"
     },
     {
-      "name": "Черновики"
+      "name": "Сделки"
+    },
+    {
+      "name": "Документы"
     }
   ],
   "security": [],
@@ -88,10 +91,10 @@
           "Состояние"
         ],
         "summary": "Учебный стенд готов",
-        "description": "Проверяет БД, миграции и bootstrap (до 3 секунд). stage=deal_drafts подтверждает только текущий этап.",
+        "description": "Проверяет БД, миграции и bootstrap. stage=deal_agreement подтверждает условия / PDF / согласия, без резерва и расчёта.",
         "responses": {
           "200": {
-            "description": "Авторизация и черновики готовы.",
+            "description": "Авторизация, версии условий / PDF и согласование готовы.",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestID"
@@ -1498,7 +1501,7 @@
       "post": {
         "operationId": "createDeal",
         "tags": [
-          "Черновики"
+          "Сделки"
         ],
         "summary": "Создать черновик один раз",
         "description": "Только USER / ORG_OWNER. Заказчик из сессии; исполнитель — другая существующая организация. Origin и CSRF обязательны. Резерва и согласия сторон не создаёт. Ключ scoped по организации, CREATE_DEAL, /deals. Trim ID/названия/описания и UTC-микросекунды срока входят в канонизацию тела. Успех и семантические отказы 400/404/422 сохраняются с ключом; повтор возвращает исходный статус/тело, включая исторический request_id отказа. Другое каноническое тело с тем же ключом — 409. Ошибки транспорта/авторизации до транзакции не сохраняются. После сетевой ошибки или 503 запрещено заменять ключ до выяснения исхода. Дедлайны сверяются в транзакции по времени БД.",
@@ -1853,10 +1856,10 @@
       "get": {
         "operationId": "listDeals",
         "tags": [
-          "Черновики"
+          "Сделки"
         ],
         "summary": "Список доступных сделок",
-        "description": "Только владелец организации: заказчик или исполнитель. q ищет ID/название сделки и ID/название контрагента. Одна временная точка БД для вычисления REVIEW_REQUIRED и фильтра. Даты включительные, from <= to. Пустые необязательные q/status/role/cursor допускаются, даты и limit при наличии не могут быть пустыми. Неизвестные или повторные query-поля запрещены. Курсор связан со всеми фильтрами, включая limit. Текущий этап возвращает только DRAFT/REVIEW_REQUIRED; остальные статусы фильтра допустимы, но не означают реализацию переходов. Все поля поиска, включая ID, сравниваются без учёта регистра.",
+        "description": "Только владелец организации: заказчик или исполнитель. q ищет ID/название сделки и ID/название контрагента. Одна временная точка БД для вычисления REVIEW_REQUIRED и фильтра. Даты включительные, from <= to. Пустые необязательные q/status/role/cursor допускаются, даты и limit при наличии не могут быть пустыми. Неизвестные или повторные query-поля запрещены. Курсор связан со всеми фильтрами, включая limit. Текущий этап возвращает DRAFT/AGREED/REVIEW_REQUIRED; остальные статусы фильтра допустимы, но не означают реализацию переходов. Все поля поиска, включая ID, сравниваются без учёта регистра.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ExpectedUser"
@@ -2114,7 +2117,7 @@
       "get": {
         "operationId": "getDeal",
         "tags": [
-          "Черновики"
+          "Сделки"
         ],
         "summary": "Карточка сделки для двух сторон",
         "description": "Обе стороны видят одни условия. Чужая организация, оператор без организации и отсутствующий ID получают 404. Просроченный DRAFT читается как REVIEW_REQUIRED без автоматического расчёта.",
@@ -2295,6 +2298,2836 @@
             "sessionCookie": []
           }
         ]
+      },
+      "patch": {
+        "operationId": "updateDeal",
+        "tags": [
+          "Сделки"
+        ],
+        "summary": "Изменить черновик",
+        "description": "Только текущий заказчик, DRAFT до срока и первого резерва. expected_version проверяется под блокировкой. Реальное изменение создаёт deal_version+1; снимает текущий PDF и согласия без удаления истории. Смена исполнителя отнимает доступ у прежней организации. No-op не создаёт версию. Повтор старого ключа не применяет изменение заново.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Один JSON-объект UTF-8 до 16 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchDeal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ команды.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет права либо CSRF / Origin не прошёл проверку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Конфликт версии, состояния, аккаунта, ключа или документа.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_REQUIRED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_MISMATCH",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен размер JSON / PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Превышен размер JSON / PDF."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Неверный тип тела.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Неверный тип тела."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Срок наступил или PDF не входит в поддерживаемый безопасный набор.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_DOCUMENT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_DOCUMENT",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/agree": {
+      "post": {
+        "operationId": "agreeDeal",
+        "tags": [
+          "Сделки"
+        ],
+        "summary": "Согласовать точные условия и PDF",
+        "description": "Явное согласие своей организации на deal_version + document_id/version/SHA256. Без PDF DOCUMENT_REQUIRED, неверная привязка DOCUMENT_MISMATCH. Повтор организации не заменяет вторую сторону. Второе согласие даёт AGREED без изменения deal_version и без движения средств. Исторический replay не активирует прежнее согласие.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Один JSON-объект UTF-8 до 16 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgreeDeal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ команды.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет права либо CSRF / Origin не прошёл проверку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Конфликт версии, состояния, аккаунта, ключа или документа.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_REQUIRED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_MISMATCH",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен размер JSON / PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Превышен размер JSON / PDF."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Неверный тип тела.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Неверный тип тела."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Срок наступил или PDF не входит в поддерживаемый безопасный набор.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_DOCUMENT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_DOCUMENT",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/rework": {
+      "post": {
+        "operationId": "reworkDeal",
+        "tags": [
+          "Сделки"
+        ],
+        "summary": "Вернуть на доработку",
+        "description": "Каждая текущая сторона: только AGREED до срока / первого резерва. Создаёт новую версию DRAFT с прежними условиями, без активного PDF и действующих согласий; причина и факты сохранены. Для продолжения нужен новый PDF и два новых согласия.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Один JSON-объект UTF-8 до 16 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReworkDeal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ команды.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет права либо CSRF / Origin не прошёл проверку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Конфликт версии, состояния, аккаунта, ключа или документа.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_REQUIRED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_MISMATCH",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен размер JSON / PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Превышен размер JSON / PDF."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Неверный тип тела.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Неверный тип тела."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Срок наступил или PDF не входит в поддерживаемый безопасный набор.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_DOCUMENT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_DOCUMENT",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/documents/generate": {
+      "post": {
+        "operationId": "generateDocument",
+        "tags": [
+          "Документы"
+        ],
+        "summary": "Сформировать учебный акт",
+        "description": "Только заказчик, DRAFT или AGREED до срока / первого резерва. Кириллица, точные деньги и все условия помещаются в PDF с переносами / страницами. Неподдерживаемый символ шрифта или чрезмерный документ отклоняется явно; возможна загрузка собственного допустимого PDF. Новый PDF повышает deal_version и document_version, сбрасывает согласия, сохраняет стабильный document_id.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Один JSON-объект UTF-8 до 16 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateDocument"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ команды.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет права либо CSRF / Origin не прошёл проверку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Конфликт версии, состояния, аккаунта, ключа или документа.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_REQUIRED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_MISMATCH",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен размер JSON / PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Превышен размер JSON / PDF."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Неверный тип тела.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Неверный тип тела."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Срок наступил или PDF не входит в поддерживаемый безопасный набор.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_DOCUMENT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_DOCUMENT",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/documents": {
+      "post": {
+        "operationId": "uploadDocument",
+        "tags": [
+          "Документы"
+        ],
+        "summary": "Загрузить новую версию PDF",
+        "description": "Только заказчик, DRAFT или AGREED до срока / первого резерва. Размер файла до 5 MiB, .pdf и application/pdf; структура реально разбирается. Допускается ограниченный статический набор: без шифрования, форм, annotations/links, JS/actions, вложений и внешних потоков. Политика парсера не является антивирусной гарантией. Новый PDF повышает версию условий, сохраняет document_id и увеличивает document_version; активные согласия сбрасываются. Ключ запроса связан с точными байтами, безопасным именем файла и ожидаемой версией; повторить идентичный файл. Приватное хранилище, публичных URL нет.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Ровно одно поле expected_deal_version и ровно один file. Дополнительные / повторные части отклоняются. Лимит framing: 5 MiB + 64 KiB, файл отдельно до 5 MiB.",
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "expected_deal_version",
+                  "file"
+                ],
+                "properties": {
+                  "expected_deal_version": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Неизменяемые байты допустимого статического PDF до 5 MiB."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ команды.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет права либо CSRF / Origin не прошёл проверку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Конфликт версии, состояния, аккаунта, ключа или документа.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_REQUIRED",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_MISMATCH",
+                        "message": "Конфликт версии, состояния, аккаунта, ключа или документа."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен размер JSON / PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Превышен размер JSON / PDF."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Неверный тип тела.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Неверный тип тела."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Срок наступил или PDF не входит в поддерживаемый безопасный набор.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_DOCUMENT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_DOCUMENT",
+                        "message": "Срок наступил или PDF не входит в поддерживаемый безопасный набор."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{id}": {
+      "get": {
+        "operationId": "getDocument",
+        "tags": [
+          "Документы"
+        ],
+        "summary": "Метаданные версии PDF",
+        "description": "Доступ требует текущего участия в сделке и участия в исторической версии, с которой связан PDF. Прежний исполнитель после замены и новый исполнитель для чужой старой версии получают 404. Хеш и размер файла сверяются с метаданными перед выдачей. Ответ не содержит пути / ключа хранилища.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            },
+            "description": "Версия PDF; без параметра — последняя сохранённая, которая может уже не быть активной в условиях сделки."
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Метаданные конкретной версии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Отображаемый аккаунт изменился.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Отображаемый аккаунт изменился."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{id}/view": {
+      "get": {
+        "operationId": "viewDocument",
+        "tags": [
+          "Документы"
+        ],
+        "summary": "Получить PDF для просмотра",
+        "description": "Доступ требует текущего участия в сделке и участия в исторической версии, с которой связан PDF. Прежний исполнитель после замены и новый исполнитель для чужой старой версии получают 404. Хеш и размер файла сверяются с метаданными перед выдачей. Точные сохранённые байты, no-store, nosniff, CSP sandbox и Content-Disposition inline.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            },
+            "description": "Обязательная версия PDF. Получение файла без версии запрещено."
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Точные байты PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              },
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "sandbox; default-src 'none'; frame-ancestors 'self'"
+              }
+            },
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Отображаемый аккаунт изменился.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Отображаемый аккаунт изменился."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{id}/download": {
+      "get": {
+        "operationId": "downloadDocument",
+        "tags": [
+          "Документы"
+        ],
+        "summary": "Скачать PDF",
+        "description": "Доступ требует текущего участия в сделке и участия в исторической версии, с которой связан PDF. Прежний исполнитель после замены и новый исполнитель для чужой старой версии получают 404. Хеш и размер файла сверяются с метаданными перед выдачей. Точные сохранённые байты, no-store, nosniff, CSP sandbox и Content-Disposition attachment.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            },
+            "description": "Обязательная версия PDF. Получение файла без версии запрещено."
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Точные байты PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              },
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "sandbox; default-src 'none'; frame-ancestors 'self'"
+              }
+            },
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Отображаемый аккаунт изменился.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Отображаемый аккаунт изменился."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -2337,7 +5170,12 @@
                   "UNSUPPORTED_MEDIA_TYPE",
                   "PAYLOAD_TOO_LARGE",
                   "INTERNAL_ERROR",
-                  "RATE_LIMITED"
+                  "RATE_LIMITED",
+                  "VERSION_CONFLICT",
+                  "INVALID_STATE",
+                  "DOCUMENT_REQUIRED",
+                  "DOCUMENT_MISMATCH",
+                  "INVALID_DOCUMENT"
                 ]
               },
               "message": {
@@ -2398,7 +5236,7 @@
           "stage": {
             "type": "string",
             "enum": [
-              "deal_drafts"
+              "deal_agreement"
             ]
           }
         }
@@ -2903,18 +5741,16 @@
           "deal_version": {
             "type": "integer",
             "format": "int64",
-            "minimum": 1,
-            "enum": [
-              1
-            ]
+            "minimum": 1
           },
           "status": {
             "type": "string",
             "enum": [
               "DRAFT",
+              "AGREED",
               "REVIEW_REQUIRED"
             ],
-            "description": "Просроченный DRAFT читается как REVIEW_REQUIRED; исторический ответ POST при replay остаётся DRAFT."
+            "description": "AGREED означает два явных согласия текущей версии условий и PDF, без резерва, подписи и выплаты. Истёкший срок читается как REVIEW_REQUIRED."
           },
           "customer_party_id": {
             "type": "string",
@@ -2969,18 +5805,77 @@
           },
           "document": {
             "type": "object",
-            "nullable": true,
-            "enum": [
-              null
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "deal_id",
+              "deal_version",
+              "document_version",
+              "sha256",
+              "file_name",
+              "size_bytes",
+              "content_type",
+              "created_at"
             ],
-            "description": "На текущем этапе всегда null; соответствующая функция ещё не реализована."
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "deal_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "deal_version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              "document_version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "SHA-256 точных неизменяемых байтов PDF."
+              },
+              "file_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5242880
+              },
+              "content_type": {
+                "type": "string",
+                "enum": [
+                  "application/pdf"
+                ]
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "nullable": true,
+            "description": "Текущий PDF или null. Снятие активного PDF не удаляет исторические версии."
           },
           "agreements": {
             "type": "array",
-            "maxItems": 0,
+            "maxItems": 2,
             "items": {
-              "type": "object"
-            }
+              "$ref": "#/components/schemas/Agreement"
+            },
+            "description": "Только согласия текущего контекста условий и PDF; по одному на организацию."
           },
           "signatures": {
             "type": "array",
@@ -3050,6 +5945,274 @@
             "type": "string",
             "nullable": true,
             "maxLength": 4096
+          }
+        }
+      },
+      "Document": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "deal_id",
+          "deal_version",
+          "document_version",
+          "sha256",
+          "file_name",
+          "size_bytes",
+          "content_type",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 точных неизменяемых байтов PDF."
+          },
+          "file_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5242880
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "application/pdf"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Agreement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "organisation_id",
+          "user_id",
+          "deal_version",
+          "document_id",
+          "document_version",
+          "document_sha256",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "organisation_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "document_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 точных неизменяемых байтов PDF."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DocumentResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal",
+          "document"
+        ],
+        "properties": {
+          "deal": {
+            "$ref": "#/components/schemas/Deal"
+          },
+          "document": {
+            "$ref": "#/components/schemas/Document"
+          }
+        }
+      },
+      "PatchDeal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "supplier_party_id": {
+            "type": "string",
+            "description": "ID другой существующей организации. Заказчик берётся из сессии.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "title": {
+            "type": "string",
+            "description": "Trim; 1–200 символов Unicode; без управляющих символов.",
+            "minLength": 1,
+            "maxLength": 200,
+            "example": "Печать партии упаковки"
+          },
+          "description": {
+            "type": "string",
+            "description": "Trim; 1–5000 символов Unicode; разрешены переводы строк и табуляция.",
+            "minLength": 1,
+            "maxLength": 5000,
+            "example": "Печать согласованного изображения на упаковке заказчика. Один акт на всю партию."
+          },
+          "amount_kopecks": {
+            "type": "string",
+            "description": "Положительные целые копейки строкой: 1..9223372036854775807. Верхняя граница проверяется сервером.",
+            "pattern": "^[1-9][0-9]*$",
+            "maxLength": 19,
+            "example": "30000000"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "RUB"
+            ]
+          },
+          "deadline_at": {
+            "type": "string",
+            "description": "Будущий срок по времени БД, проверяется внутри транзакции после ожидания блокировок.",
+            "format": "date-time",
+            "example": "2030-12-25T12:45:00Z"
+          }
+        },
+        "description": "Изменяемые поля необязательны; явный null запрещён. Реальное изменение DRAFT создаёт новую версию без активного PDF и согласий; no-op оставляет прежнюю версию."
+      },
+      "AgreeDeal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal_version",
+          "document_id",
+          "document_version",
+          "document_sha256"
+        ],
+        "properties": {
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "document_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 точных неизменяемых байтов PDF."
+          }
+        }
+      },
+      "ReworkDeal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal_version",
+          "reason"
+        ],
+        "properties": {
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Trim; явная причина возврата до резерва."
+          }
+        }
+      },
+      "GenerateDocument": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_deal_version",
+          "template_id"
+        ],
+        "properties": {
+          "expected_deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "template_id": {
+            "type": "string",
+            "enum": [
+              "printing-acceptance-v1"
+            ]
           }
         }
       }

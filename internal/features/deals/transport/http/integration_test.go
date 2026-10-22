@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Adopten123/digital-ruble-deals/internal/core/documentfile"
 	"github.com/Adopten123/digital-ruble-deals/internal/core/security"
 	httpapi "github.com/Adopten123/digital-ruble-deals/internal/core/transport/http"
 	authrepo "github.com/Adopten123/digital-ruble-deals/internal/features/auth/repository/postgres"
@@ -39,11 +40,22 @@ type fixture struct {
 	server                              *httptest.Server
 	customer, supplier, third, operator *client
 	balances                            string
+	files                               *documentfile.Store
 }
 
 func setup(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{pool: testutil.Database(t)}
+	var err error
+	f.files, err = documentfile.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := f.files.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := bootstrap.Run(context.Background(), f.pool); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +86,7 @@ func (f *fixture) handler(t *testing.T) http.Handler {
 	auth := authhttp.New(svc, csrf)
 	mux := http.NewServeMux()
 	auth.RegisterRoutes(mux)
-	dealhttp.New(dealservice.New(dealrepo.New(f.pool), make([]byte, 32)), csrf).RegisterRoutes(mux, auth.Require)
+	dealhttp.New(dealservice.New(dealrepo.New(f.pool), make([]byte, 32), f.files), csrf).RegisterRoutes(mux, auth.Require)
 	return httpapi.Middleware(slog.New(slog.NewTextHandler(io.Discard, nil)), mux)
 }
 func (f *fixture) accountSnapshot(t *testing.T) string {

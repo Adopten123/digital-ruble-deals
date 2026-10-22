@@ -10,12 +10,12 @@ import (
 )
 
 type Config struct {
-	DatabaseURL, HTTPAddr, AppOrigin, KeyFile, MigrationsDir string
-	DemoMode, SecureCookies                                  bool
+	DatabaseURL, HTTPAddr, AppOrigin, KeyFile, MigrationsDir, DocumentsDir string
+	DemoMode, SecureCookies                                                bool
 }
 
 func Load() (Config, error) {
-	c := Config{DatabaseURL: os.Getenv("DATABASE_URL"), HTTPAddr: env("HTTP_ADDR", ":8080"), AppOrigin: env("APP_ORIGIN", "http://localhost:8080"), KeyFile: env("APP_KEY_FILE", "/var/lib/poaktu/keys/app.key"), MigrationsDir: env("MIGRATIONS_DIR", "./migrations")}
+	c := Config{DatabaseURL: os.Getenv("DATABASE_URL"), HTTPAddr: env("HTTP_ADDR", ":8080"), AppOrigin: env("APP_ORIGIN", "http://localhost:8080"), KeyFile: env("APP_KEY_FILE", "/var/lib/poaktu/keys/app.key"), MigrationsDir: env("MIGRATIONS_DIR", "./migrations"), DocumentsDir: env("DOCUMENTS_DIR", "/var/lib/poaktu/documents")}
 	var err error
 	c.DemoMode, err = strconv.ParseBool(env("DEMO_MODE", "false"))
 	if err != nil {

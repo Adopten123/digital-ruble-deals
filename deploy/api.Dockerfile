@@ -14,6 +14,7 @@ RUN mkdir -p /app /var/lib/poaktu/keys /var/lib/poaktu/documents
 RUN chown -R 10001:10001 /app /var/lib/poaktu
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out/poaktu /app/poaktu
+COPY --from=build /src/internal/core/documentfile/THIRD_PARTY_NOTICES.md /usr/share/licenses/poaktu/documentfile.txt
 COPY --chown=10001:10001 migrations/ /app/migrations/
 USER 10001:10001
 EXPOSE 8080
