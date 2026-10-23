@@ -18,6 +18,12 @@ docker compose up --build
 
 На компьютере разработки Docker Engine пока не удалось запустить из-за WSL2 / виртуализации; приложение проверено отдельно на локальной PostgreSQL. Предыдущий каркас до черновиков прошёл полный запуск из чистой копии в [Linux CI](https://github.com/Adopten123/digital-ruble-deals/actions/runs/39368496701) на коммите `64a2152`: сборка, readiness, HTTP smoke, повторный bootstrap и перезапуск. Тот же прогон подтвердил Go race-тесты с PostgreSQL 18.6. Для черновиков CI дополнен проверкой прежнего ID / ключа после перезапуска; его актуальный результат смотреть в pull request этого этапа. Проверка на втором пользовательском ПК остаётся в плане.
 
+## Документация API и frontend
+
+На запущенном web открыть `/api-docs/` (Compose: `http://localhost:8080/api-docs/`). Swagger UI и OpenAPI входят в локальную сборку, CDN не требуется. Экспорт схемы — `/api-docs/openapi.json`; исходник — [api/openapi.json](api/openapi.json). Порядок работы с cookie / CSRF и полный справочник текущих операций — [api/README.md](api/README.md). Устройство интерфейса, dev proxy, восстановление команд и команды разработки — [FRONTEND.md](FRONTEND.md).
+
+`npm --prefix web run docs:check` проверяет OpenAPI и совпадение операций с Go. Перед dev / dev:e2e / build автоматически выполняется docs:prepare; после изменения схемы на уже запущенном Vite можно вызвать `npm --prefix web run docs:prepare`. При первом добавлении public-папки требуется перезапуск старого Vite. Сам backend не раздаёт Swagger, открывать его следует через web origin.
+
 ## Учебные учётные записи
 
 Общий публичный пароль стенда: `PoaktuDemo2026!`.

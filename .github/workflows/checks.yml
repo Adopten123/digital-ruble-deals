@@ -44,6 +44,8 @@ jobs:
         working-directory: web
       - run: npm run typecheck:e2e
         working-directory: web
+      - run: npm run docs:check
+        working-directory: web
       - run: npm test
         working-directory: web
       - run: npm run build

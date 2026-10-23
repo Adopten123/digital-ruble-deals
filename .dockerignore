@@ -10,3 +10,4 @@ work
 **/*.log
 docs/research
 *.pptx
+web/public/api-docs
