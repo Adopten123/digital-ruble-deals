@@ -57,11 +57,15 @@ jobs:
       - run: docker compose config --quiet
       - run: docker compose up --build --wait --wait-timeout 180
       - run: node scripts/smoke.mjs
+        env:
+          SMOKE_STATE_FILE: ${{ runner.temp }}/poaktu-deal-drafts-smoke.json
       - name: Check idempotent bootstrap
         run: docker compose run --rm bootstrap
       - name: Check API restart persistence
         run: docker compose restart api web
       - run: node scripts/smoke.mjs
+        env:
+          SMOKE_STATE_FILE: ${{ runner.temp }}/poaktu-deal-drafts-smoke.json
       - name: Failure logs
         if: failure()
         run: docker compose logs --no-color --tail 100

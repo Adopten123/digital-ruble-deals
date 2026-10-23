@@ -1,6 +1,6 @@
 # Архитектура «ПоАкту»
 
-Обновлено: 20 октября 2026 года. Go + PostgreSQL + TypeScript и архитектурный образец выбраны пользователем. Реализована основа config / PostgreSQL / UnitOfWork / HTTP / auth / organizations / bootstrap; платёжные модули ниже остаются проектом. Требования — [TZ.md](TZ.md), контракт — [API.md](API.md).
+Обновлено: 20 октября 2026 года. Go + PostgreSQL + TypeScript и архитектурный образец выбраны пользователем. Реализованы config / PostgreSQL / UnitOfWork / HTTP / auth / organizations / bootstrap и создание / чтение черновиков deals с версиями, идемпотентными результатами, аудитом и pending outbox. Платёжные модули ниже остаются проектом. Требования — [TZ.md](TZ.md), контракт — [API.md](API.md).
 
 ## Стартовая схема
 

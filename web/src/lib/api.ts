@@ -42,6 +42,43 @@ export interface RegisterInput {
   organisation: { name: string; kind: OrganisationKind };
 }
 
+export interface CreateDealInput {
+  supplier_party_id: string;
+  title: string;
+  description: string;
+  amount_kopecks: string;
+  currency: 'RUB';
+  deadline_at: string;
+}
+
+export interface DealParty { id: string; name: string; kind: OrganisationKind }
+
+export interface Deal extends CreateDealInput {
+  id: string;
+  deal_version: number;
+  status: 'DRAFT' | 'REVIEW_REQUIRED';
+  customer_party_id: string;
+  customer: DealParty;
+  supplier: DealParty;
+  document: null;
+  agreements: unknown[];
+  signatures: unknown[];
+  reserve: null;
+  payment_id: null;
+  dispute: null;
+  cancellation_request: null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DealFilters {
+  q?: string;
+  status?: '' | 'DRAFT' | 'REVIEW_REQUIRED';
+  role?: '' | 'customer' | 'supplier';
+  created_from?: string;
+  created_to?: string;
+}
+
 const errorMessages: Record<string, string> = {
   INVALID_REQUEST: 'Проверьте заполненные поля и повторите запрос.',
   AUTH_REQUIRED: 'Войдите в аккаунт, чтобы продолжить.',
@@ -54,6 +91,12 @@ const errorMessages: Record<string, string> = {
   RATE_LIMITED: 'Слишком много попыток. Подождите немного и попробуйте снова.',
   INTERNAL_ERROR: 'Сервер не смог обработать запрос. Попробуйте позже.',
   TEMPORARILY_UNAVAILABLE: 'Сервис временно недоступен. Проверьте готовность стенда.',
+  INVALID_AMOUNT: 'Проверьте сумму: нужны положительные целые копейки в допустимом диапазоне.',
+  AMOUNT_OVERFLOW: 'Сумма превышает допустимый предел.',
+  DEADLINE_PASSED: 'Срок уже наступил. Укажите время в будущем.',
+  IDEMPOTENCY_KEY_REQUIRED: 'Не удалось подтвердить ключ создания сделки. Обновите страницу.',
+  IDEMPOTENCY_CONFLICT: 'Этот запрос уже использован для других условий. Обновите список и проверьте созданную сделку.',
+  COMMIT_OUTCOME_UNKNOWN: 'Ответ о сохранении не получен. Повторите тот же запрос для проверки результата.',
 };
 
 export class ApiError extends Error {
@@ -134,12 +177,13 @@ export class ApiClient {
     catch { throw new Error('Сервер вернул некорректный ответ. Повторите запрос.'); }
   }
 
-  private async mutate<T>(path: string, body?: unknown): Promise<T> {
+  private async mutate<T>(path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
     const token = await this.csrf();
     return this.request<T>(path, {
       method: 'POST',
       headers: {
         'X-CSRF-Token': token,
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -158,6 +202,16 @@ export class ApiClient {
     if (cursor) params.set('cursor', cursor);
     return this.request(`/organisations?${params.toString()}`);
   }
+  createDeal(input: CreateDealInput, idempotencyKey: string): Promise<Deal> {
+    return this.mutate('/deals', input, idempotencyKey);
+  }
+  deals(filters: DealFilters = {}, cursor?: string): Promise<Page<Deal>> {
+    const params = new URLSearchParams({ limit: '20' });
+    for (const [name, value] of Object.entries(filters)) if (value) params.set(name, value);
+    if (cursor) params.set('cursor', cursor);
+    return this.request(`/deals?${params.toString()}`);
+  }
+  deal(id: string): Promise<Deal> { return this.request(`/deals/${encodeURIComponent(id)}`); }
 }
 
 export const api = new ApiClient();

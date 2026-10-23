@@ -104,7 +104,9 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	var ready bool
 	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1) AND EXISTS(SELECT 1 FROM bootstrap_runs WHERE name=$2)
- AND to_regclass('users') IS NOT NULL AND to_regclass('sessions') IS NOT NULL AND to_regclass('accounts') IS NOT NULL`, corepg.SchemaVersion, Name).Scan(&ready)
+ AND to_regclass('users') IS NOT NULL AND to_regclass('sessions') IS NOT NULL AND to_regclass('accounts') IS NOT NULL
+ AND to_regclass('deals') IS NOT NULL AND to_regclass('deal_versions') IS NOT NULL AND to_regclass('idempotency_keys') IS NOT NULL
+ AND to_regclass('audit_events') IS NOT NULL AND to_regclass('outbox') IS NOT NULL`, corepg.SchemaVersion, Name).Scan(&ready)
 	if err != nil {
 		return err
 	}
