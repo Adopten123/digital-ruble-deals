@@ -13,7 +13,7 @@ const dateFormatter = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 
 function dateLabel(value: string): string { return dateFormatter.format(new Date(value)); }
 function Status({ deal }: { deal: Deal }) {
   return <span className={`deal-status${deal.status === 'REVIEW_REQUIRED' ? ' deal-status-review' : ''}`}>
-    <span aria-hidden="true" />{deal.status === 'REVIEW_REQUIRED' ? 'Требует проверки' : deal.status === 'FUNDED' ? 'Средства зарезервированы' : deal.status === 'AGREED' ? 'Согласовано' : 'Черновик'}
+    <span aria-hidden="true" />{deal.status === 'REVIEW_REQUIRED' ? 'Требует проверки' : deal.status === 'READY_TO_SETTLE' ? 'Ожидает расчёта' : deal.status === 'FUNDED' ? 'Средства зарезервированы' : deal.status === 'AGREED' ? 'Согласовано' : 'Черновик'}
   </span>;
 }
 function Failure({ error, retry }: { error: unknown; retry?: () => void }) {
@@ -98,7 +98,7 @@ function DealList({ ownId, onOpen, onUnauthorized }: ScopeProps & { ownId: strin
     <form className="deal-filters panel" onSubmit={search} role="search" aria-label="Поиск сделок">
       <div className="deal-search-row"><label className="visually-hidden" htmlFor={`${formId}-query`}>Поиск по названию, ID или контрагенту</label><div className="search-field"><span aria-hidden="true">⌕</span><input id={`${formId}-query`} value={query} onChange={(event) => setQuery(event.target.value)} maxLength={400} placeholder="Название, ID или контрагент" /></div><button className="button button-primary" type="submit" disabled={loading}>Найти</button></div>
       <div className="deal-filter-fields">
-        <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option><option value="DRAFT">Черновик</option><option value="AGREED">Согласовано</option><option value="FUNDED">Средства зарезервированы</option><option value="REVIEW_REQUIRED">Требует проверки</option></select></div>
+        <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option><option value="DRAFT">Черновик</option><option value="AGREED">Согласовано</option><option value="FUNDED">Средства зарезервированы</option><option value="READY_TO_SETTLE">Ожидает расчёта</option><option value="REVIEW_REQUIRED">Требует проверки</option></select></div>
         <div><label htmlFor={`${formId}-role`}>Моя роль</label><select id={`${formId}-role`} value={role} onChange={(event) => setRole(event.target.value as DealFilters['role'])}><option value="">Любая роль</option><option value="customer">Заказчик</option><option value="supplier">Исполнитель</option></select></div>
         <div><label htmlFor={`${formId}-from`}>Создана с</label><input type="date" id={`${formId}-from`} value={from} onChange={(event) => setFrom(event.target.value)} /></div>
         <div><label htmlFor={`${formId}-to`}>По дату включительно</label><input type="date" id={`${formId}-to`} value={to} onChange={(event) => setTo(event.target.value)} /></div>
@@ -186,7 +186,7 @@ function CreateDeal({ organisation, pending, onPending, onCreated, onBack, onUna
         {error != null && <Failure error={error} />}
         <div className="deal-form-footer"><p>Создание черновика не резервирует и не списывает средства.</p><button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Подтверждаем…' : pending ? 'Проверить результат создания' : 'Создать черновик'}<span aria-hidden="true">↗</span></button></div>
       </form>
-      <aside className="panel deal-guide"><div className="section-icon" aria-hidden="true">▤</div><h3>Сначала — ясные условия</h3><p>Исполнитель увидит сделку в своём кабинете. Выбор организации ещё не означает её согласие.</p><ol><li><strong>Условия</strong><span>Стороны, сумма, описание и срок</span></li><li><strong>Документ и согласование</strong><span>PDF и два явных согласия</span></li><li><strong>Резерв и расчёт</strong><span>После согласования и двух подписей</span></li></ol><p className="field-help">После создания добавьте PDF и получите согласие обеих сторон. Согласование не резервирует и не списывает средства.</p></aside>
+      <aside className="panel deal-guide"><div className="section-icon" aria-hidden="true">▤</div><h3>Сначала — ясные условия</h3><p>Исполнитель увидит сделку в своём кабинете. Выбор организации ещё не означает её согласие.</p><ol><li><strong>Условия</strong><span>Стороны, сумма, описание и срок</span></li><li><strong>Документ и согласование</strong><span>PDF и два явных согласия</span></li><li><strong>Резерв и подписи</strong><span>Полная сумма и две тестовые подписи</span></li></ol><p className="field-help">После создания добавьте PDF и получите согласие обеих сторон. Выплата по событию ЭДО будет доступна следующим этапом.</p></aside>
     </div>
   </>;
 }

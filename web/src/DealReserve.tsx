@@ -45,6 +45,6 @@ export default function DealReserve({ deal, ownId, locked, revision, onReserve, 
     </>}
     {eligible && <><button className="button button-primary reserve-submit" type="button" disabled={locked} onClick={onReserve}>Зарезервировать всю сумму</button><p className="field-help">Подтверждаются актуальные условия, PDF и два согласия. Сервер повторно проверит доступные средства в момент операции.</p></>}
     {!reserve && !eligible && <p className="field-help">{deal.status === 'AGREED' && !customer ? 'Резерв создаёт заказчик. После подтверждения он станет виден обеим сторонам.' : 'Для резерва нужны актуальный PDF и согласие обеих сторон до срока сделки.'}</p>}
-    {reserve && <p className="field-help">Условия закреплены резервом. Тестовые подписи и выплата по событию ЭДО — следующий этап.</p>}
+    {reserve && <p className="field-help">После резерва стороны могут сохранить две тестовые подписи. Выплата по событию ЭДО будет доступна следующим этапом.</p>}
   </section>;
 }

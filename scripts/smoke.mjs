@@ -64,7 +64,7 @@ async function ready() {
       if (response.status === 200) {
         const body = await response.json();
         assert.equal(body.contour, 'test');
-        assert.equal(body.stage, 'deal_reserves');
+        assert.equal(body.stage, 'test_signatures');
         return;
       }
     } catch (error) {
@@ -72,7 +72,7 @@ async function ready() {
     }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  throw new Error('Deal reserve API did not become ready');
+  throw new Error('Test signature API did not become ready');
 }
 
 await ready();
@@ -151,7 +151,7 @@ const stateFile = process.env.SMOKE_STATE_FILE;
 let previousState;
 if (stateFile && existsSync(stateFile)) {
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
-  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2'].includes(saved.kind));
+  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3'].includes(saved.kind));
   previousState = saved;
   const { json: persisted } = await customer.request(`/api/v1/deals/${encodeURIComponent(saved.id)}`);
   assert.equal(persisted.title, saved.body.title);
@@ -169,7 +169,7 @@ if (stateFile && existsSync(stateFile)) {
     assert.equal(account.account.reserved_kopecks, '30000');
     assert.equal(account.account.available_kopecks, '0');
     const { json: card } = await previousCustomer.request(`/api/v1/deals/${saved.money.deal_id}`);
-    assert.equal(card.status, 'FUNDED');
+    assert.equal(card.status, saved.money.signatures ? 'READY_TO_SETTLE' : 'FUNDED');
     assert.equal(card.agreements.length, 2);
     assert.deepEqual(card.reserve, saved.money.reserve_result.reserve);
     const { bytes } = await previousCustomer.request(`/api/v1/documents/${card.document.id}/download?version=${card.document.document_version}`, { binary: true });
@@ -186,6 +186,21 @@ if (stateFile && existsSync(stateFile)) {
       method: 'POST', body: { amount_kopecks: '20000', reason: 'Учебное списание только доступного остатка' }, headers: { 'Idempotency-Key': saved.money.debit_key }, expected: 201,
     });
     assert.equal(debitReplay.transaction_id, saved.money.debit_transaction_id, 'Restart must not debit again');
+    if (saved.money.signatures) {
+      const signed = saved.money.signatures;
+      assert.deepEqual(card.signatures, signed.second_result.deal.signatures, 'Restart preserves the two exact signature facts');
+      for (const [client, key, original] of [[previousCustomer, signed.customer_key, signed.first_result], [supplier, signed.supplier_key, signed.second_result]]) {
+        const { json: replay } = await client.request('/api/v1/documents/' + card.document.id + '/sign', {
+          method: 'POST', body: signed.input, headers: { 'Idempotency-Key': key }, expected: 201,
+        });
+        assert.deepEqual(replay, original, 'Restart preserves the original historical signature response');
+      }
+      const { json: current } = await previousCustomer.request('/api/v1/deals/' + card.id);
+      assert.equal(current.status, 'READY_TO_SETTLE');
+      assert.deepEqual(current.signatures, card.signatures, 'Replays do not append signatures or regress the current state');
+      assert.deepEqual(current.reserve, card.reserve);
+      assert.equal(current.payment_id, null);
+    }
     const { json: afterReplay } = await previousCustomer.request('/api/v1/organisations/me');
     assert.deepEqual(afterReplay.account, account.account);
     await previousCustomer.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
@@ -262,7 +277,7 @@ assert.equal(expired.error.code, 'DEADLINE_PASSED');
 const { json: accountAfterDrafts } = await customer.request('/api/v1/organisations/me');
 assert.deepEqual(accountAfterDrafts.account, customerAccount.account, 'Drafts must not reserve or transfer funds');
 // Full implemented path: register -> credit -> draft -> PDF -> two consents ->
-// reserve -> debit only available -> private PDF/read/replay after restart.
+// reserve -> debit only available -> two signatures -> private PDF/read/replay after restart.
 const moneyCreateKey = randomUUID();
 const { json: moneyDraft } = await unauthenticated.request('/api/v1/deals', {
   method: 'POST', body: { ...dealBody, title: `Учебный резерв ${suffix}`, amount_kopecks: '30000' }, headers: { 'Idempotency-Key': moneyCreateKey }, expected: 201,
@@ -293,11 +308,42 @@ const { json: debit } = await operator.request(`/api/v1/demo/accounts/${own.acco
 assert.equal(debit.account.total_kopecks, '30000');
 assert.equal(debit.account.reserved_kopecks, '30000');
 assert.equal(debit.account.available_kopecks, '0');
+const debitSnapshot = Object.fromEntries(['id', 'currency', 'total_kopecks', 'reserved_kopecks', 'available_kopecks'].map(field => [field, debit.account[field]]));
+const signatureInput = { deal_version: agreement.deal_version, document_version: agreement.document_version, document_sha256: agreement.document_sha256 };
+const customerSignatureKey = randomUUID(), supplierSignatureKey = randomUUID();
+const signPath = '/api/v1/documents/' + moneyDocument.document.id + '/sign';
+const { json: firstSignature } = await unauthenticated.request(signPath, {
+  method: 'POST', body: signatureInput, headers: { 'Idempotency-Key': customerSignatureKey }, expected: 201,
+});
+assert.equal(firstSignature.deal.status, 'FUNDED');
+assert.equal(firstSignature.deal.signatures.length, 1);
+assert.equal(firstSignature.signature.organisation_id, own.organisation.id);
+assert.equal(firstSignature.signature.document_sha256, agreement.document_sha256);
+const { json: firstAccount } = await unauthenticated.request('/api/v1/organisations/me');
+assert.deepEqual(firstAccount.account, debitSnapshot, 'First signature must not change any money');
+const { json: secondSignature } = await supplier.request(signPath, {
+  method: 'POST', body: signatureInput, headers: { 'Idempotency-Key': supplierSignatureKey }, expected: 201,
+});
+assert.equal(secondSignature.deal.status, 'READY_TO_SETTLE');
+assert.equal(secondSignature.deal.signatures.length, 2);
+assert.equal(secondSignature.signature.organisation_id, supplierAccount.organisation.id);
+assert.deepEqual(secondSignature.deal.reserve, reserved.reserve);
+assert.equal(secondSignature.deal.payment_id, null);
+const { json: signatureReplay } = await unauthenticated.request(signPath, {
+  method: 'POST', body: signatureInput, headers: { 'Idempotency-Key': customerSignatureKey }, expected: 201,
+});
+assert.deepEqual(signatureReplay, firstSignature, 'First signature replay is the original FUNDED response');
+const { json: signedCard } = await unauthenticated.request('/api/v1/deals/' + moneyDraft.id);
+assert.equal(signedCard.status, 'READY_TO_SETTLE');
+assert.deepEqual(signedCard.signatures, secondSignature.deal.signatures);
+const { json: signedAccount } = await unauthenticated.request('/api/v1/organisations/me');
+assert.deepEqual(signedAccount.account, debitSnapshot, 'Two signatures do not consume or release the reserve');
 const { json: supplierAfter } = await supplier.request('/api/v1/organisations/me');
-assert.deepEqual(supplierAfter.account, supplierAccount.account, 'Reserve and operator debit must not pay the supplier');
-const moneyState = { email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey, reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
-if (stateFile && !previousState?.money) {
-  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-deal-reserves-smoke-v2', money: moneyState };
+assert.deepEqual(supplierAfter.account, supplierAccount.account, 'Reserve, signatures and operator debit must not pay the supplier');
+const signatures = { input: signatureInput, customer_key: customerSignatureKey, supplier_key: supplierSignatureKey, first_result: firstSignature, second_result: secondSignature };
+const moneyState = { signatures, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey, reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
+if (stateFile && (!previousState?.money || !previousState.money.signatures)) {
+  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-test-signatures-smoke-v3', money: moneyState };
   writeFileSync(stateFile, JSON.stringify(saved), { flag: previousState ? 'w' : 'wx', mode: 0o600 });
 }
 
@@ -308,4 +354,4 @@ for (const client of [unauthenticated, customer, supplier, operator]) {
   await revoked.request('/api/v1/auth/me', { expected: 401 });
 }
 
-console.log('Deal reserve smoke passed: auth/CSRF, scoped drafts, private PDF, two explicit consents, atomic reserve, balanced demo credit/debit, protected available funds, unchanged seed/supplier balances, restart persistence and exact command replay when state file exists, server logout.');
+console.log('Test signature smoke passed: auth/CSRF, scoped drafts, private PDF, two explicit consents, atomic reserve, two exact test signatures and READY_TO_SETTLE without payout, balanced demo credit/debit, protected available funds, unchanged seed/supplier balances, restart persistence and exact command replay when state file exists, server logout.');

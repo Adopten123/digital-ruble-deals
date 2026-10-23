@@ -1,7 +1,27 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { Page } from '@playwright/test';
 import { test, expect } from '../support.ts';
 
+// Real API setup shares the process-wide authentication budget with UI flows.
+// Respect an actual 429 once; never weaken the product limiter or retry other errors.
+async function submitAuth(page: Page, endpoint: 'login' | 'register', submit: () => Promise<unknown>) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const received = page.waitForResponse(response => response.url().endsWith('/api/v1/auth/' + endpoint) && response.request().method() === 'POST');
+    await submit();
+    const response = await received;
+    if (response.status() !== 429 || attempt === 2) return { response, attempts: attempt };
+    expect((await response.json()).error.code).toBe('RATE_LIMITED');
+    await expect(page.getByRole('alert')).toContainText('Слишком много попыток');
+    const seconds = Number(response.headers()['retry-after']);
+    expect(Number.isInteger(seconds) && seconds >= 1 && seconds <= 60).toBe(true);
+    await test.step('respect server authentication Retry-After before one explicit retry', async () => { await delay(seconds * 1000); });
+  }
+  throw new Error('Authentication attempt did not return a response');
+}
+
 test.describe('authentication through the browser', () => {
+  test.describe.configure({ timeout: 90_000 });
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('wrong credentials recover, a real session survives reload, and logout revokes it', async ({ page, actors }) => {
@@ -9,11 +29,13 @@ test.describe('authentication through the browser', () => {
     await expect(page.getByText('Тестовый контур. Расчёты и ЭДО эмулируются')).toBeVisible();
     await page.getByLabel('Email', { exact: true }).fill(actors.customer.user.email);
     await page.getByLabel('Пароль', { exact: true }).fill('DefinitelyWrong2026!');
-    await page.getByRole('button', { name: 'Войти в кабинет' }).click();
+    const wrong = await submitAuth(page, 'login', () => page.getByRole('button', { name: 'Войти в кабинет' }).click());
+    expect(wrong.response.status()).toBe(401);
     await expect(page.getByRole('alert')).toContainText('Проверьте email и пароль');
     await expect(page.getByLabel('Пароль', { exact: true })).toBeEnabled();
     await page.getByLabel('Пароль', { exact: true }).fill('PoaktuDemo2026!');
-    await page.getByLabel('Пароль', { exact: true }).press('Enter');
+    const loggedIn = await submitAuth(page, 'login', () => page.getByLabel('Пароль', { exact: true }).press('Enter'));
+    expect(loggedIn.response.status()).toBe(200);
     await expect(page.getByRole('heading', { name: actors.customer.organisation!.name, exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByRole('heading', { name: 'Учебный счёт' })).toBeVisible();
@@ -35,12 +57,11 @@ test.describe('authentication through the browser', () => {
     await page.getByLabel('Email', { exact: true }).fill(actors.customer.user.email);
     await page.getByLabel('Пароль', { exact: true }).fill('SyntheticCompany2026!');
     await page.getByLabel('Название организации', { exact: true }).fill(`UI Company ${randomUUID()}`);
-    await page.getByRole('button', { name: 'Создать организацию' }).click();
+    const duplicate = await submitAuth(page, 'register', () => page.getByRole('button', { name: 'Создать организацию' }).click());
+    expect(duplicate.response.status()).toBe(409);
     await expect(page.getByRole('alert')).toContainText('Этот email уже используется');
     await page.getByLabel('Email', { exact: true }).fill(`ui-company-${randomUUID()}@demo.poaktu.local`);
-    const registered = page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/register') && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Создать организацию' }).click();
-    const response = await registered;
+    const { response } = await submitAuth(page, 'register', () => page.getByRole('button', { name: 'Создать организацию' }).click());
     expect(response.status()).toBe(201);
     const session = await response.json();
     expect(session.organisation.kind).toBe('COMPANY');
@@ -72,14 +93,12 @@ test.describe('authentication through the browser', () => {
     await expect(page.getByRole('alert')).toContainText('до 200 символов');
     expect(posts).toBe(0);
     await page.getByLabel('Название организации', { exact: true }).fill(name);
-    const registered = page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/register') && response.request().method() === 'POST');
-    await page.getByRole('button', { name: 'Создать организацию' }).click();
-    const response = await registered;
+    const { response, attempts } = await submitAuth(page, 'register', () => page.getByRole('button', { name: 'Создать организацию' }).click());
     expect(response.status()).toBe(201);
     expect(response.request().postDataJSON()).toMatchObject({ password, organisation: { name, kind: 'IP' } });
     await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
     await expect(page.locator('.balance-card')).toHaveCount(3);
-    expect(posts).toBe(1);
+    expect(posts).toBe(attempts);
   });
 });
 

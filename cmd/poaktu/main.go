@@ -142,7 +142,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "deal_reserves"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "test_signatures"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")

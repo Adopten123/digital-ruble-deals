@@ -9,7 +9,7 @@ setup('prepare synthetic authenticated actors on the test contour', async ({ pla
   const probe = await playwright.request.newContext({ baseURL: API_BASE_URL, maxRedirects: 0 });
   const ready = await probe.get('/readyz');
   expect(ready.status()).toBe(200);
-  expect(await ready.json()).toMatchObject({ contour: 'test', stage: 'deal_reserves' });
+  expect(await ready.json()).toMatchObject({ contour: 'test', stage: 'test_signatures' });
   await probe.dispose();
   for (const role of ['customer', 'supplier', 'operator', 'outsider'] as Role[]) {
     const context = await playwright.request.newContext({ baseURL: API_BASE_URL, maxRedirects: 0 });

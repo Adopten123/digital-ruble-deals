@@ -2,16 +2,18 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, describeError } from './lib/api';
 import type { Counterparty, Deal } from './lib/api';
-import { agreementStorageKey, agreeDealInput, definitiveAgreementFailure, pdfIdentity, readPendingAgreement, removePendingAgreement, reserveDealInput, reworkDealInput, updateDealInput, verifyPendingPdf } from './lib/agreement';
+import { agreementStorageKey, agreeDealInput, definitiveAgreementFailure, pdfIdentity, readPendingAgreement, removePendingAgreement, reserveDealInput, reworkDealInput, signDocumentCommand, updateDealInput, verifyPendingPdf } from './lib/agreement';
 import type { AgreementCommand, PendingAgreement } from './lib/agreement';
 import { localDateTime, plainRubles } from './lib/deals';
 import SupplierPicker from './SupplierPicker';
 import DealReserve from './DealReserve';
+import DealSignatures from './DealSignatures';
 
 interface Props { deal: Deal; ownId: string; onDeal: (deal: Deal) => void; onUnauthorized: (error: unknown) => void }
 const commandLabels: Record<AgreementCommand['kind'], string> = {
   update: 'изменение условий', upload: 'загрузка PDF', generate: 'формирование акта', agree: 'согласование документа', rework: 'возврат на доработку',
   reserve: 'резервирование средств',
+  sign: 'тестовая подпись документа',
 };
 
 export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: Props) {
@@ -52,7 +54,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
     && item.document_id === document.id && item.document_version === document.document_version && item.document_sha256 === document.sha256) : [];
   const hasAgreed = currentAgreements.some(item => item.organisation_id === ownId);
   const pendingVersion = pending ? pending.kind === 'update' ? pending.input.expected_version
-    : pending.kind === 'agree' || pending.kind === 'rework' || pending.kind === 'reserve' ? pending.input.deal_version : pending.input.expected_deal_version : null;
+    : pending.kind === 'agree' || pending.kind === 'rework' || pending.kind === 'reserve' || pending.kind === 'sign' ? pending.input.deal_version : pending.input.expected_deal_version : null;
 
   async function run(command?: AgreementCommand) {
     if (busy || storageError != null) return;
@@ -85,6 +87,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
         case 'agree': await api.agreeDeal(attempt.dealId, attempt.input, attempt.key); break;
         case 'rework': await api.reworkDeal(attempt.dealId, attempt.input, attempt.key); break;
         case 'reserve': await api.reserveDeal(attempt.dealId, attempt.input, attempt.key); break;
+        case 'sign': await api.signDocument(attempt.documentId, attempt.input, attempt.key); break;
         case 'upload': await api.uploadDocument(attempt.dealId, attempt.input.expected_deal_version, file!, attempt.input.file_name, attempt.key); break;
       }
       // A cached idempotent reply can describe an earlier version. Always read current server state.
@@ -100,7 +103,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
         catch (storageFailure) { if (isCurrent()) setStorageError(storageFailure); }
       }
       if (isCurrent()) {
-        if (failure instanceof ApiError && ['VERSION_CONFLICT', 'INVALID_STATE', 'DEADLINE_PASSED', 'DOCUMENT_MISMATCH', 'CONSENTS_MISSING'].includes(failure.code)) setRefreshRequired(true);
+        if (failure instanceof ApiError && ['VERSION_CONFLICT', 'INVALID_STATE', 'DEADLINE_PASSED', 'DOCUMENT_MISMATCH', 'CONSENTS_MISSING', 'RESERVE_REQUIRED'].includes(failure.code)) setRefreshRequired(true);
         if (attempt?.kind === 'reserve') setBalanceRevision(value => value + 1);
         setError(failure); onUnauthorized(failure);
       }
@@ -147,7 +150,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
     {storageError != null && <div className="notice notice-error" role="alert">{describeError(storageError)}</div>}
     {pending && <div className="notice notice-info" role="status"><strong>Команда ожидает подтверждения: {commandLabels[pending.kind]}</strong><span>Запрос относится к версии условий {pendingVersion}. Условия и ключ запроса сохранены. Повтор проверяет прежнюю команду; новая команда до подтверждения закрыта.</span>
       {pending.kind === 'update' && <span>Сохранённые условия: «{pending.input.title}», сумма {plainRubles(pending.input.amount_kopecks!)} ₽, исполнитель {pending.input.supplier_party_id}.</span>}
-      {pending.kind === 'agree' && <><span>Согласование PDF версии {pending.input.document_version}.</span><code className="document-hash">SHA-256: {pending.input.document_sha256}</code></>}
+      {(pending.kind === 'agree' || pending.kind === 'sign') && <><span>{pending.kind === 'sign' ? 'Подпись' : 'Согласование'} PDF версии {pending.input.document_version}.</span><code className="document-hash">SHA-256: {pending.input.document_sha256}</code></>}
       {pending.kind === 'rework' && <span>Причина: {pending.input.reason}</span>}
       {pending.kind === 'upload' && <><span>Повторно выберите исходный PDF с теми же байтами. Имя отправки останется «{pending.input.file_name}», размер {pending.input.size_bytes.toLocaleString('ru-RU')} байт.</span><code className="document-hash">SHA-256: {pending.input.sha256}</code></>}
       <button className="button button-primary" type="button" disabled={busy || (pending.kind === 'upload' && !file)} onClick={() => void run()}>{busy ? 'Проверяем…' : 'Проверить результат команды'}</button>
@@ -182,6 +185,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
       {expired && active && <p className="field-help">Срок наступил. Обновите карточку: автоматическое продолжение закрыто, выполнение работ не подтверждено.</p>}
     </div>
     <DealReserve deal={deal} ownId={ownId} locked={locked} revision={balanceRevision} onReserve={() => validateAndRun(() => ({ kind: 'reserve', input: reserveDealInput(deal) }))} onUnauthorized={onUnauthorized} />
+    <DealSignatures key={`${deal.deal_version}:${document?.document_version}`} deal={deal} ownId={ownId} locked={locked} onSign={() => validateAndRun(() => signDocumentCommand(deal, ownId))} />
   </section>;
 }
 

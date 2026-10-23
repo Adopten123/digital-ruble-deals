@@ -1,5 +1,5 @@
 import { ApiError } from './api.ts';
-import type { AgreeDealInput, Deal, GenerateDocumentInput, ReserveDealInput, ReworkDealInput, UpdateDealInput } from './api.ts';
+import type { AgreeDealInput, Deal, DealSignature, GenerateDocumentInput, ReserveDealInput, ReworkDealInput, SignDocumentInput, UpdateDealInput } from './api.ts';
 import { createDealInput, localDateTime, readPendingDeal } from './deals.ts';
 
 export const MAX_PDF_BYTES = 5 * 1024 * 1024;
@@ -9,6 +9,7 @@ export type AgreementCommand =
   | { kind: 'agree'; input: AgreeDealInput }
   | { kind: 'rework'; input: ReworkDealInput }
   | { kind: 'reserve'; input: ReserveDealInput }
+  | { kind: 'sign'; documentId: string; input: SignDocumentInput }
   | { kind: 'upload'; input: { expected_deal_version: number; file_name: string; size_bytes: number; sha256: string } };
 export type PendingAgreement = AgreementCommand & { key: string; dealId: string };
 
@@ -25,7 +26,7 @@ export function readPendingAgreement(serialized: string | null, dealId: string):
   if (serialized === null) return null;
   try {
     const attempt: PendingAgreement = JSON.parse(serialized);
-    if (!attempt || !exactKeys(attempt, ['key', 'dealId', 'kind', 'input']) || attempt.dealId !== dealId
+    if (!attempt || !exactKeys(attempt, attempt.kind === 'sign' ? ['key', 'dealId', 'kind', 'documentId', 'input'] : ['key', 'dealId', 'kind', 'input']) || attempt.dealId !== dealId
       || typeof attempt.key !== 'string' || !/^[\x21-\x7e]{16,128}$/.test(attempt.key)
       || !attempt.input || typeof attempt.input !== 'object' || Array.isArray(attempt.input)) throw new Error();
     const input = attempt.input;
@@ -50,6 +51,11 @@ export function readPendingAgreement(serialized: string | null, dealId: string):
         break;
       case 'reserve':
         if (!exactKeys(input, ['deal_version']) || !version(attempt.input.deal_version)) throw new Error();
+        break;
+      case 'sign':
+        if (!exactKeys(input, ['deal_version', 'document_version', 'document_sha256'])
+          || !nonempty(attempt.documentId, 128) || !version(attempt.input.deal_version)
+          || !version(attempt.input.document_version) || !/^[a-f0-9]{64}$/.test(attempt.input.document_sha256)) throw new Error();
         break;
       case 'upload':
         if (!exactKeys(input, ['expected_deal_version', 'file_name', 'size_bytes', 'sha256'])
@@ -106,6 +112,30 @@ export function reserveDealInput(deal: Deal): ReserveDealInput {
   return { deal_version: context.deal_version };
 }
 
+/** Only facts for the exact current PDF count; stale signatures never confirm another version. */
+export function currentSignatures(deal: Deal): DealSignature[] {
+  const document = deal.document;
+  if (!document || document.deal_version !== deal.deal_version) return [];
+  return deal.signatures.filter(item => item.deal_version === deal.deal_version && item.document_id === document.id
+    && item.document_version === document.document_version && item.document_sha256 === document.sha256
+    && (item.organisation_id === deal.customer_party_id || item.organisation_id === deal.supplier_party_id));
+}
+
+export function signDocumentCommand(deal: Deal, organisationId: string): Extract<AgreementCommand, { kind: 'sign' }> {
+  if (organisationId !== deal.customer_party_id && organisationId !== deal.supplier_party_id) throw new Error('Подписать документ может только сторона сделки от своей организации.');
+  if (deal.status !== 'FUNDED') throw new Error('Подпись доступна после резервирования до завершения двустороннего подписания.');
+  const context = agreeDealInput(deal);
+  const reserve = deal.reserve;
+  if (!reserve || reserve.status !== 'ACTIVE' || reserve.deal_id !== deal.id || reserve.deal_version !== deal.deal_version
+    || reserve.amount_kopecks !== deal.amount_kopecks || reserve.currency !== deal.currency) throw new Error('Для подписи нужен действующий резерв полной суммы.');
+  const parties = new Set(deal.agreements.filter(item => item.deal_version === context.deal_version
+    && item.document_id === context.document_id && item.document_version === context.document_version
+    && item.document_sha256 === context.document_sha256).map(item => item.organisation_id));
+  if (deal.customer_party_id === deal.supplier_party_id || !parties.has(deal.customer_party_id) || !parties.has(deal.supplier_party_id)) throw new Error('Нужны согласия обеих сторон на актуальный PDF.');
+  if (currentSignatures(deal).some(item => item.organisation_id === organisationId)) throw new Error('Ваша организация уже подписала эту версию документа.');
+  return { kind: 'sign', documentId: context.document_id, input: { deal_version: context.deal_version, document_version: context.document_version, document_sha256: context.document_sha256 } };
+}
+
 export async function pdfIdentity(file: File): Promise<{ file_name: string; size_bytes: number; sha256: string }> {
   if (!/\.pdf$/i.test(file.name) || (file.type && file.type !== 'application/pdf')) throw new Error('Выберите PDF-документ с расширением .pdf.');
   if (!file.size || file.size > MAX_PDF_BYTES) throw new Error('PDF должен быть непустым, размером не более 5 МиБ.');
@@ -129,6 +159,6 @@ export function definitiveAgreementFailure(error: unknown): boolean {
   return error instanceof ApiError && [
     'INVALID_REQUEST', 'INVALID_AMOUNT', 'AMOUNT_OVERFLOW', 'DEADLINE_PASSED', 'RESOURCE_NOT_FOUND',
     'IDEMPOTENCY_KEY_REQUIRED', 'VERSION_CONFLICT', 'INVALID_STATE', 'DOCUMENT_REQUIRED', 'INVALID_PDF', 'INVALID_DOCUMENT',
-    'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_MEDIA_TYPE', 'FORBIDDEN', 'INSUFFICIENT_AVAILABLE_FUNDS', 'CONSENTS_MISSING', 'DOCUMENT_MISMATCH',
+    'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_MEDIA_TYPE', 'FORBIDDEN', 'INSUFFICIENT_AVAILABLE_FUNDS', 'CONSENTS_MISSING', 'DOCUMENT_MISMATCH', 'RESERVE_REQUIRED',
   ].includes(error.code);
 }
