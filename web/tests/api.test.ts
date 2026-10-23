@@ -63,3 +63,66 @@ test('catalog encodes query and opaque cursor, session failures remain explicit'
   assert.equal(query.get('q'), 'Тест & ИП');
   assert.equal(query.get('cursor'), 'a+b/=');
 });
+
+test('clearing CSRF invalidates the old flight without replacing the new flight or token', async () => {
+  const replies: ((response: Response) => void)[] = [];
+  const client = new ApiClient(() => new Promise<Response>((resolve) => replies.push(resolve)));
+  const old = client.csrf();
+  const rejected = assert.rejects(old, (error: unknown) => error instanceof ApiError && error.code === 'SESSION_CHANGED');
+  client.clearCsrf();
+  const fresh = client.csrf();
+  replies[0](Response.json({ csrf_token: 'old-session-token' }));
+  await rejected;
+  const joined = client.csrf();
+  assert.equal(replies.length, 2, 'old finally must not discard the new pending request');
+  replies[1](Response.json({ csrf_token: 'new-session-token' }));
+  assert.equal(await fresh, 'new-session-token');
+  assert.equal(await joined, 'new-session-token');
+  assert.equal(await client.csrf(), 'new-session-token');
+});
+
+test('protected requests carry the displayed actor, while session discovery stays unbound', async () => {
+  const calls: { url: string; headers: Headers }[] = [];
+  const client = new ApiClient(async (url, options) => {
+    calls.push({ url: String(url), headers: new Headers(options?.headers) });
+    return Response.json(String(url).endsWith('/csrf') ? { csrf_token: 'token' } : {});
+  });
+  client.bindIdentity('displayed-user');
+  await client.me();
+  await client.ownOrganisation();
+  await client.logout();
+  assert.equal(calls.find(x => x.url.endsWith('/auth/me'))!.headers.get('X-Expected-User-ID'), null);
+  assert.equal(calls.find(x => x.url.endsWith('/organisations/me'))!.headers.get('X-Expected-User-ID'), 'displayed-user');
+  assert.equal(calls.find(x => x.url.endsWith('/auth/logout'))!.headers.get('X-Expected-User-ID'), 'displayed-user');
+});
+
+test('identity change during CSRF preflight cancels the old mutation without sending it', async () => {
+  let respond!: (response: Response) => void;
+  let calls = 0;
+  const client = new ApiClient(() => { calls++; return new Promise<Response>(resolve => { respond = resolve; }); });
+  client.bindIdentity('old-user');
+  const pending = client.logout();
+  const rejected = assert.rejects(pending, (error: unknown) => error instanceof ApiError && error.code === 'SESSION_CHANGED');
+  client.bindIdentity('new-user');
+  respond(Response.json({ csrf_token: 'old-token' }));
+  await rejected;
+  assert.equal(calls, 1, 'only preflight, no old mutation under the new actor');
+});
+
+test('a late 401 for the previous actor cannot clear the new actor CSRF cache', async () => {
+  let oldReply!: (response: Response) => void;
+  let csrfReads = 0;
+  const client = new ApiClient(async (url) => {
+    if (String(url).endsWith('/csrf')) { csrfReads++; return Response.json({ csrf_token: 'new-actor-token' }); }
+    return new Promise<Response>(resolve => { oldReply = resolve; });
+  });
+  client.bindIdentity('old-user');
+  const old = client.ownOrganisation();
+  const rejected = assert.rejects(old, (error: unknown) => error instanceof ApiError && error.status === 401);
+  client.bindIdentity('new-user');
+  assert.equal(await client.csrf(), 'new-actor-token');
+  oldReply(Response.json({ error: { code: 'SESSION_EXPIRED' } }, { status: 401 }));
+  await rejected;
+  assert.equal(await client.csrf(), 'new-actor-token');
+  assert.equal(csrfReads, 1);
+});

@@ -1,5 +1,5 @@
 import type { Counterparty, CreateDealInput } from './api.ts';
-import { rublesToKopecks } from './money.ts';
+import { parseKopecks, rublesToKopecks } from './money.ts';
 
 export interface PendingDealAttempt {
   key: string;
@@ -44,7 +44,7 @@ export function removePendingDeal(storage: Pick<Storage, 'getItem' | 'removeItem
 }
 
 export function readPendingDeal(serialized: string | null): PendingDealAttempt | null {
-  if (!serialized) return null;
+  if (serialized === null) return null;
   try {
     const attempt: PendingDealAttempt = JSON.parse(serialized);
     if (!attempt || typeof attempt.key !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/.test(attempt.key)
@@ -55,6 +55,20 @@ export function readPendingDeal(serialized: string | null): PendingDealAttempt |
       || !['COMPANY', 'IP'].includes(attempt.supplier.kind) || attempt.supplier.id !== attempt.input.supplier_party_id) {
       throw new Error('invalid attempt');
     }
+    const input = attempt.input;
+    const deadline = new Date(input.deadline_at);
+    if (!attempt.supplier.id || attempt.supplier.id.length > 128
+      || !input.title.trim() || [...input.title].length > 200
+      || !input.description.trim() || [...input.description].length > 5000
+      || input.amount_kopecks.length > 19 || parseKopecks(input.amount_kopecks) <= 0n
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(input.deadline_at)
+      || !Number.isFinite(deadline.getTime()) || deadline.getUTCFullYear() < 1
+      || deadline.toISOString().slice(0, 19) !== input.deadline_at.slice(0, 19)
+      || Object.keys(input).some(key => !['supplier_party_id', 'title', 'description', 'amount_kopecks', 'currency', 'deadline_at'].includes(key))
+      || new TextEncoder().encode(JSON.stringify(input)).length > 16384) {
+      throw new Error('invalid saved conditions');
+    }
+    // A past deadline is legitimate after a lost response; never replace that command or its key.
     return attempt;
   } catch {
     throw new Error('Не удалось прочитать сохранённый запрос создания. Проверьте список сделок перед новой попыткой.');

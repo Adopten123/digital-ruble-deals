@@ -60,6 +60,12 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			writeError(w, r, err)
 			return
 		}
+		// A shared browser cookie can change while another tab still displays the old actor.
+		// The header is only a precondition: identity still comes exclusively from the session.
+		if expected := r.Header.Get("X-Expected-User-ID"); expected != "" && expected != identity.User.ID {
+			httpapi.Error(w, r, http.StatusConflict, "SESSION_CHANGED", "Аккаунт изменился. Обновите кабинет")
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, identity)))
 	})
 }

@@ -84,6 +84,7 @@ const errorMessages: Record<string, string> = {
   AUTH_REQUIRED: 'Войдите в аккаунт, чтобы продолжить.',
   INVALID_CREDENTIALS: 'Не удалось войти. Проверьте email и пароль.',
   SESSION_EXPIRED: 'Сессия завершилась. Войдите снова.',
+  SESSION_CHANGED: 'Аккаунт изменился в другой вкладке. Проверьте организацию перед повторным действием.',
   FORBIDDEN: 'У вашего аккаунта нет прав для этого действия.',
   CSRF_INVALID: 'Защитный токен устарел. Повторите действие, чтобы получить новый.',
   EMAIL_CONFLICT: 'Этот email уже используется. Войдите или укажите другой.',
@@ -134,6 +135,8 @@ export function describeError(error: unknown): string {
 export class ApiClient {
   private token: string | null = null;
   private tokenRequest: Promise<string> | null = null;
+  private tokenGeneration = 0;
+  private userId: string | null = null;
   private fetcher: typeof fetch;
 
   constructor(fetcher: typeof fetch = (...args) => globalThis.fetch(...args)) {
@@ -141,26 +144,35 @@ export class ApiClient {
   }
 
   clearCsrf(): void {
+    this.tokenGeneration += 1;
     this.token = null;
     this.tokenRequest = null;
+  }
+
+  bindIdentity(userId: string | null): void {
+    if (this.userId !== userId) this.clearCsrf();
+    this.userId = userId;
   }
 
   async csrf(): Promise<string> {
     if (this.token) return this.token;
     if (!this.tokenRequest) {
+      const generation = this.tokenGeneration;
       this.tokenRequest = this.request<{ csrf_token: string }>('/auth/csrf')
         .then((body) => {
+          if (generation !== this.tokenGeneration) throw new ApiError(409, 'SESSION_CHANGED');
           if (typeof body.csrf_token !== 'string' || !body.csrf_token) {
             throw new Error('Сервер не выдал защитный токен. Повторите запрос.');
           }
           this.token = body.csrf_token;
           return body.csrf_token;
-        }).finally(() => { this.tokenRequest = null; });
+        }).finally(() => { if (generation === this.tokenGeneration) this.tokenRequest = null; });
     }
     return this.tokenRequest;
   }
 
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    const generation = this.tokenGeneration;
     const response = await this.fetcher(`/api/v1${path}`, {
       ...options,
       credentials: 'same-origin',
@@ -169,7 +181,7 @@ export class ApiClient {
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => null);
       const error = parseApiError(response.status, body);
-      if (error.code === 'CSRF_INVALID' || response.status === 401) this.clearCsrf();
+      if (generation === this.tokenGeneration && (error.code === 'CSRF_INVALID' || error.code === 'SESSION_CHANGED' || response.status === 401)) this.clearCsrf();
       throw error;
     }
     if (response.status === 204) return undefined as T;
@@ -177,11 +189,18 @@ export class ApiClient {
     catch { throw new Error('Сервер вернул некорректный ответ. Повторите запрос.'); }
   }
 
-  private async mutate<T>(path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
+  private identityHeaders(userId = this.userId): Record<string, string> {
+    return userId ? { 'X-Expected-User-ID': userId } : {};
+  }
+
+  private async mutate<T>(path: string, body?: unknown, idempotencyKey?: string, protectedRequest = false): Promise<T> {
+    // Capture before awaiting CSRF: a later UI session change must not change this command's actor.
+    const identityHeaders = protectedRequest ? this.identityHeaders() : {};
     const token = await this.csrf();
     return this.request<T>(path, {
       method: 'POST',
       headers: {
+        ...identityHeaders,
         'X-CSRF-Token': token,
         ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
@@ -195,23 +214,23 @@ export class ApiClient {
     return this.mutate('/auth/login', { email, password });
   }
   register(input: RegisterInput): Promise<Session> { return this.mutate('/auth/register', input); }
-  logout(): Promise<void> { return this.mutate('/auth/logout'); }
-  ownOrganisation(): Promise<OwnOrganisation> { return this.request('/organisations/me'); }
+  logout(): Promise<void> { return this.mutate('/auth/logout', undefined, undefined, true); }
+  ownOrganisation(): Promise<OwnOrganisation> { return this.request('/organisations/me', { headers: this.identityHeaders() }); }
   organisations(query: string, cursor?: string): Promise<Page<Counterparty>> {
     const params = new URLSearchParams({ q: query, limit: '20' });
     if (cursor) params.set('cursor', cursor);
-    return this.request(`/organisations?${params.toString()}`);
+    return this.request(`/organisations?${params.toString()}`, { headers: this.identityHeaders() });
   }
   createDeal(input: CreateDealInput, idempotencyKey: string): Promise<Deal> {
-    return this.mutate('/deals', input, idempotencyKey);
+    return this.mutate('/deals', input, idempotencyKey, true);
   }
   deals(filters: DealFilters = {}, cursor?: string): Promise<Page<Deal>> {
     const params = new URLSearchParams({ limit: '20' });
     for (const [name, value] of Object.entries(filters)) if (value) params.set(name, value);
     if (cursor) params.set('cursor', cursor);
-    return this.request(`/deals?${params.toString()}`);
+    return this.request(`/deals?${params.toString()}`, { headers: this.identityHeaders() });
   }
-  deal(id: string): Promise<Deal> { return this.request(`/deals/${encodeURIComponent(id)}`); }
+  deal(id: string): Promise<Deal> { return this.request(`/deals/${encodeURIComponent(id)}`, { headers: this.identityHeaders() }); }
 }
 
 export const api = new ApiClient();

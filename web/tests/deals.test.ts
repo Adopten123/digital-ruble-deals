@@ -44,8 +44,20 @@ test('lost create response retains exact body and command key through manual ret
 
 test('saved command corruption is explicit instead of silently starting a fresh command', () => {
   assert.equal(readPendingDeal(null), null);
+  assert.throws(() => readPendingDeal(''));
   assert.throws(() => readPendingDeal('{broken'));
   assert.throws(() => readPendingDeal(JSON.stringify({ key: 'short' })));
+});
+
+test('valid JSON with corrupt conditions is blocked, while an intact expired pending command is preserved', () => {
+  const input = createDealInput(fields, now);
+  const attempt = { key: 'abec4124-e107-4e07-88c8-0322c3b15a9b', input, supplier: { id: 'supplier-1', name: 'Test supplier', kind: 'COMPANY', is_demo: true } };
+  for (const changed of [
+    { deadline_at: 'not-a-date' }, { deadline_at: '2027-02-30T12:00:00Z' },
+    { amount_kopecks: '9223372036854775808' }, { title: ' ' }, { title: 'A'.repeat(201) }, { description: '' },
+  ]) assert.throws(() => readPendingDeal(JSON.stringify({ ...attempt, input: { ...input, ...changed } })), /Не удалось прочитать/);
+  const expired = JSON.stringify({ ...attempt, input: { ...input, deadline_at: '2020-01-01T12:00:00.000Z' } });
+  assert.equal(readPendingDeal(expired)!.input.deadline_at, '2020-01-01T12:00:00.000Z');
 });
 
 test('late completion of command A cannot delete newer pending command B', () => {
