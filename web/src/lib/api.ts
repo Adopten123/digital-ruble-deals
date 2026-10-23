@@ -77,6 +77,14 @@ export interface DealAgreement {
   document_id: string; document_version: number; document_sha256: string; created_at: string;
 }
 
+export interface DealSignature {
+  id: string; organisation_id: string; user_id: string; deal_version: number;
+  document_id: string; document_version: number; document_sha256: string; created_at: string;
+}
+
+export interface SignDocumentInput { deal_version: number; document_version: number; document_sha256: string }
+export interface SignDocumentResult { signature: DealSignature; deal: Deal }
+
 export interface UpdateDealInput extends Partial<CreateDealInput> { expected_version: number }
 export interface AgreeDealInput { deal_version: number; document_id: string; document_version: number; document_sha256: string }
 export interface ReworkDealInput { deal_version: number; reason: string }
@@ -86,13 +94,13 @@ export interface DocumentResult { deal: Deal; document: DealDocument }
 export interface Deal extends CreateDealInput {
   id: string;
   deal_version: number;
-  status: 'DRAFT' | 'AGREED' | 'FUNDED' | 'REVIEW_REQUIRED';
+  status: 'DRAFT' | 'AGREED' | 'FUNDED' | 'READY_TO_SETTLE' | 'REVIEW_REQUIRED';
   customer_party_id: string;
   customer: DealParty;
   supplier: DealParty;
   document: DealDocument | null;
   agreements: DealAgreement[];
-  signatures: unknown[];
+  signatures: DealSignature[];
   reserve: DealReserve | null;
   payment_id: null;
   dispute: null;
@@ -103,7 +111,7 @@ export interface Deal extends CreateDealInput {
 
 export interface DealFilters {
   q?: string;
-  status?: '' | 'DRAFT' | 'AGREED' | 'FUNDED' | 'REVIEW_REQUIRED';
+  status?: '' | 'DRAFT' | 'AGREED' | 'FUNDED' | 'READY_TO_SETTLE' | 'REVIEW_REQUIRED';
   role?: '' | 'customer' | 'supplier';
   created_from?: string;
   created_to?: string;
@@ -124,7 +132,7 @@ const errorMessages: Record<string, string> = {
   TEMPORARILY_UNAVAILABLE: 'Сервис временно недоступен. Проверьте готовность стенда.',
   INVALID_AMOUNT: 'Проверьте сумму: нужны положительные целые копейки в допустимом диапазоне.',
   AMOUNT_OVERFLOW: 'Сумма превышает допустимый предел.',
-  DEADLINE_PASSED: 'Срок уже наступил. Укажите время в будущем.',
+  DEADLINE_PASSED: 'Срок сделки уже наступил. Обновите карточку и проверьте условия.',
   IDEMPOTENCY_KEY_REQUIRED: 'Не удалось подтвердить ключ создания сделки. Обновите страницу.',
   IDEMPOTENCY_CONFLICT: 'Этот запрос уже использован для других условий. Обновите список и проверьте созданную сделку.',
   COMMIT_OUTCOME_UNKNOWN: 'Ответ о сохранении не получен. Повторите тот же запрос для проверки результата.',
@@ -136,6 +144,7 @@ const errorMessages: Record<string, string> = {
   PAYLOAD_TOO_LARGE: 'Файл слишком большой. Максимальный размер PDF — 5 МиБ.',
   UNSUPPORTED_MEDIA_TYPE: 'Нужен PDF-документ. Выберите файл с расширением .pdf.',
   CONSENTS_MISSING: 'Для следующего действия нужны согласия обеих сторон на актуальный документ.',
+  RESERVE_REQUIRED: 'Для подписи нужен действующий резерв полной суммы. Обновите карточку.',
   DOCUMENT_MISMATCH: 'Документ или его версия изменились. Обновите карточку перед следующим действием.',
   INSUFFICIENT_AVAILABLE_FUNDS: 'Недостаточно доступных тестовых средств. Обновите остатки; активные резервы нельзя расходовать.',
 };
@@ -298,6 +307,9 @@ export class ApiClient {
   }
   reserveDeal(id: string, input: ReserveDealInput, key: string): Promise<ReserveResult> {
     return this.mutate(`/deals/${encodeURIComponent(id)}/reserve`, input, key, true);
+  }
+  signDocument(id: string, input: SignDocumentInput, key: string): Promise<SignDocumentResult> {
+    return this.mutate(`/documents/${encodeURIComponent(id)}/sign`, input, key, true);
   }
   demoAccounts(query: string, cursor?: string): Promise<Page<DemoAccount>> {
     const params = new URLSearchParams({ q: query, limit: '20' });

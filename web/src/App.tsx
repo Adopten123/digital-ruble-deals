@@ -188,7 +188,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
         <span className="process-line" aria-hidden="true" />
         <div><span className="step-number">03</span><strong>Подписать</strong><p>Две подписи и проверка условий расчёта</p></div>
       </div>
-      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте сделки, согласуйте PDF и резервируйте тестовые средства. Подписи и расчёты появятся в следующих обновлениях.</p>
+      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте сделки, согласуйте PDF, резервируйте тестовые средства и подписывайте документ обеими сторонами. Доставка события ЭДО и выплата — следующий этап.</p>
     </section>
     <section className="auth-card panel" aria-label="Доступ в приложение">
       <div className="auth-tabs" aria-label="Выбор формы">
@@ -255,7 +255,7 @@ function Workspace({ session, onUnauthorized }: { session: Session; onUnauthoriz
       : session.organisation ? <Account key={session.user.id} session={session} onUnauthorized={onUnauthorized} />
         : <section className="panel operator-scope"><div className="section-icon" aria-hidden="true">↳</div><h2>Отдельный доступ оператора</h2>
           <p>У этого аккаунта нет собственной организации и счёта. Оператор не подписывает документы за стороны и не согласует их условия.</p>
-          <p className="muted">{isOperator ? 'Доступны учебные счета, тестовые зачисления и служебные списания с учётом активных резервов. Имитатор ЭДО появится на следующем этапе.' : 'У аккаунта нет доступа к денежным операциям оператора.'}</p>
+          <p className="muted">{isOperator ? 'Доступны учебные счета, тестовые зачисления и служебные списания с учётом активных резервов. Стороны могут сохранить две тестовые подписи. Доставка события ЭДО и выплата — следующий этап.' : 'У аккаунта нет доступа к денежным операциям оператора.'}</p>
           <button type="button" className="button button-primary" onClick={() => setTab('catalog')}>Открыть каталог<span aria-hidden="true">↗</span></button>
         </section>}
   </div>;
@@ -304,7 +304,7 @@ function Account({ session, onUnauthorized }: { session: Session; onUnauthorized
     </section>
     <div className="overview-grid">
       <section className="panel next-stage"><div className="section-icon" aria-hidden="true">↗</div><span className="tag">Следующий этап</span><h2>От условий к расчёту</h2>
-        <p>В разделе «Сделки» доступны условия, PDF, два согласия и резерв полной суммы. Следующий этап — две тестовые подписи и расчёт по проверенному событию.</p>
+        <p>В разделе «Сделки» доступны условия, PDF, два согласия, резерв полной суммы и две тестовые подписи. Следующий этап — доставка события ЭДО и выплата после проверки всех условий. Пока средства остаются в резерве.</p>
         <div className="future-flow"><span>Согласование</span><span aria-hidden="true">→</span><span>Резерв</span><span aria-hidden="true">→</span><span>Две подписи</span><span aria-hidden="true">→</span><span>Расчёт</span></div>
       </section>
       <section className="panel organisation-info"><h2>Ваша организация</h2><dl><div><dt>Название</dt><dd>{session.organisation?.name}</dd></div><div><dt>Идентификатор</dt><dd><code>{session.organisation?.id}</code></dd></div><div><dt>Доступ</dt><dd>Владелец учебной организации</dd></div></dl><p className="field-help">Права проверяются сервером для каждого запроса.</p></section>
