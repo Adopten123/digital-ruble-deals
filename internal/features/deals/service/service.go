@@ -40,7 +40,7 @@ type Deal struct {
 	Supplier            Party       `json:"supplier"`
 	Document            *Document   `json:"document"`
 	Agreements          []Agreement `json:"agreements"`
-	Signatures          []any       `json:"signatures"`
+	Signatures          []Signature `json:"signatures"`
 	Reserve             *Reserve    `json:"reserve"`
 	PaymentID           *string     `json:"payment_id"`
 	Dispute             any         `json:"dispute"`
@@ -55,7 +55,7 @@ func (d *Deal) Normalize() {
 		d.Agreements = []Agreement{}
 	}
 	if d.Signatures == nil {
-		d.Signatures = []any{}
+		d.Signatures = []Signature{}
 	}
 }
 

@@ -24,6 +24,7 @@ type Service interface {
 	Document(context.Context, service.Actor, string, *int64) (service.Document, error)
 	DocumentBytes(context.Context, service.Actor, string, int64) (service.Document, []byte, error)
 	Reserve(context.Context, service.Actor, string, string, service.ReserveInput) (service.Result, error)
+	Sign(context.Context, service.Actor, string, string, service.SignInput) (service.Result, error)
 }
 type Handler struct {
 	service Service
@@ -42,6 +43,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("POST /api/v1/deals/{id}/documents/generate", require(http.HandlerFunc(h.generate)))
 	mux.Handle("POST /api/v1/deals/{id}/documents", require(http.HandlerFunc(h.upload)))
 	mux.Handle("GET /api/v1/documents/{id}", require(http.HandlerFunc(h.document)))
+	mux.Handle("POST /api/v1/documents/{id}/sign", require(http.HandlerFunc(h.sign)))
 	mux.Handle("GET /api/v1/documents/{id}/view", require(http.HandlerFunc(h.view)))
 	mux.Handle("GET /api/v1/documents/{id}/download", require(http.HandlerFunc(h.download)))
 }

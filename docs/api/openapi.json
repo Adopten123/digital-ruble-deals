@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ПоАкту — реализованный HTTP API",
-    "version": "0.3.0",
-    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Все 24 реализованные операции: авторизация, организации, сделки, версии PDF, два согласия, доработка, резерв и учебные счета оператора. Деньги — целые копейки строками, JSON до16KiB, PDF до5MiB. Резерв меняет reserved/available, сохраняя total; перевод исполнителю не выполняется. Credit/debit доступны только DEMO_OPERATOR и проходят через сбалансированные проводки; debit не тратит активный резерв. Тестовые подписи, расчёт по ЭДО, споры, отмена, уведомления и A19 ещё не реализованы. Cookie pa_session/pa_csrf + X-CSRF-Token и точный Origin=APP_ORIGIN; X-Expected-User-ID проверяет ожидаемый аккаунт. После login/register обновить csrfToken в Authorize. Все изменяющие предметные команды используют сохранённые тело и Idempotency-Key; неизвестный исход повторять тем же телом/ключом. Проектный контракт будущих функций — docs/API.md."
+    "version": "0.4.0",
+    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Все 25 реализованных операций: авторизация, организации, сделки, версии PDF, два согласия, доработка, резерв, тестовые подписи и учебные счета оператора. Деньги — целые копейки строками, JSON до16KiB, PDF до5MiB. Резерв меняет reserved/available, сохраняя total; перевод исполнителю не выполняется. Credit/debit доступны только DEMO_OPERATOR и проходят через сбалансированные проводки; debit не тратит активный резерв. Первая тестовая подпись сохраняет FUNDED без движения денег; вторая переводит в READY_TO_SETTLE и сохраняет единственное основание ЭДО. Доставка ЭДО, выплата, споры, отмена, уведомления и A19 ещё не реализованы. Cookie pa_session/pa_csrf + X-CSRF-Token и точный Origin=APP_ORIGIN; X-Expected-User-ID проверяет ожидаемый аккаунт. После login/register обновить csrfToken в Authorize. Все изменяющие предметные команды используют сохранённые тело и Idempotency-Key; неизвестный исход повторять тем же телом/ключом. Проектный контракт будущих функций — docs/API.md."
   },
   "servers": [
     {
@@ -6582,6 +6582,419 @@
           }
         }
       }
+    },
+    "/api/v1/documents/{id}/sign": {
+      "post": {
+        "operationId": "signDocument",
+        "tags": [
+          "Документы"
+        ],
+        "summary": "Тестовая подпись своей организации после резерва",
+        "description": "Только участник сделки, закреплённые условия / PDF / две согласующие стороны и ACTIVE-резерв. Новая подпись допустима до срока; SHA-256 и размер приватного файла проверяются на сервере. Первая подпись не меняет деньги; вторая создаёт READY_TO_SETTLE и одно устойчивое основание ЭДО, без доставки и выплаты. Тот же ключ возвращает точный исторический ответ; изменённое тело — конфликт. Новый ключ для существующей подписи возвращает тот же факт и актуальную сделку без повторного аудита / outbox, в том числе после срока. После исторического ответа перечитать GET сделки. Оператор / посторонняя организация не подписывают и получают 404.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Один JSON-объект UTF-8 до 16 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignDocument"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подпись создана либо возвращён существующий факт без второй подписи той же организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело, типы, версия или Idempotency-Key.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_AMOUNT": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_AMOUNT",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Нет действующей сессии."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет права либо CSRF / Origin не прошёл проверку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует или закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует или закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Версия / документ / состояние / ключ команды не соответствуют текущей сделке.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Версия / документ / состояние / ключ команды не соответствуют текущей сделке."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DOCUMENT_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_MISMATCH",
+                        "message": "Версия / документ / состояние / ключ команды не соответствуют текущей сделке."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Версия / документ / состояние / ключ команды не соответствуют текущей сделке."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Версия / документ / состояние / ключ команды не соответствуют текущей сделке."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Версия / документ / состояние / ключ команды не соответствуют текущей сделке."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Превышен размер JSON / PDF.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Превышен размер JSON / PDF."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Неверный тип тела.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Неверный тип тела."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Срок наступил либо отсутствуют точные согласия / полный активный резерв.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Срок наступил либо отсутствуют точные согласия / полный активный резерв."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CONSENTS_MISSING": {
+                    "value": {
+                      "error": {
+                        "code": "CONSENTS_MISSING",
+                        "message": "Срок наступил либо отсутствуют точные согласия / полный активный резерв."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "RESERVE_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "RESERVE_REQUIRED",
+                        "message": "Срок наступил либо отсутствуют точные согласия / полный активный резерв."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденный отказ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденный отказ."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Недоступность инфраструктуры / файла; исход команды требуется выяснить.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Недоступность инфраструктуры / файла; исход команды требуется выяснить."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6692,7 +7105,7 @@
           "stage": {
             "type": "string",
             "enum": [
-              "deal_reserves"
+              "test_signatures"
             ]
           }
         }
@@ -7205,9 +7618,10 @@
               "DRAFT",
               "AGREED",
               "FUNDED",
+              "READY_TO_SETTLE",
               "REVIEW_REQUIRED"
             ],
-            "description": "AGREED — два текущих согласия; FUNDED — полная сумма зарезервирована, без выплаты. Наступивший срок читается как REVIEW_REQUIRED; активный резерв при этом сохраняется."
+            "description": "AGREED — два согласия до резерва; FUNDED — активный полный резерв и не более одной тестовой подписи. READY_TO_SETTLE — две подписи и сохранённое основание ЭДО; выплата ещё не выполнена. Наступивший срок читается как REVIEW_REQUIRED с сохранением резерва и подписей."
           },
           "customer_party_id": {
             "type": "string",
@@ -7336,10 +7750,11 @@
           },
           "signatures": {
             "type": "array",
-            "maxItems": 0,
+            "maxItems": 2,
             "items": {
-              "type": "object"
-            }
+              "$ref": "#/components/schemas/Signature"
+            },
+            "description": "Тестовые подписи разных сторон на текущие условия и PDF; пустой массив до первой подписи."
           },
           "reserve": {
             "type": "object",
@@ -7931,6 +8346,108 @@
           },
           "account": {
             "$ref": "#/components/schemas/OperatorAccount"
+          }
+        }
+      },
+      "Signature": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "organisation_id",
+          "user_id",
+          "deal_version",
+          "document_id",
+          "document_version",
+          "document_sha256",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "organisation_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "document_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 точных неизменяемых байтов PDF."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Неизменяемый факт тестовой подписи своей организации после резерва. Согласие до резерва хранится отдельно; это не квалифицированная электронная подпись."
+      },
+      "SignDocument": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal_version",
+          "document_version",
+          "document_sha256"
+        ],
+        "properties": {
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "SHA-256 точных неизменяемых байтов PDF."
+          }
+        }
+      },
+      "SignResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "signature",
+          "deal"
+        ],
+        "properties": {
+          "signature": {
+            "$ref": "#/components/schemas/Signature"
+          },
+          "deal": {
+            "$ref": "#/components/schemas/Deal"
           }
         }
       }
