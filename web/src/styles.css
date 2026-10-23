@@ -1516,7 +1516,7 @@ textarea { resize:vertical; line-height:1.65 }
   }
   .counterparty>code {
     width:auto;
-    flex-basis:100%;
+    flex-basis:calc(100% - 47px);
     font-size:9px;
     margin-left:47px
   }
@@ -1528,6 +1528,23 @@ textarea { resize:vertical; line-height:1.65 }
   }
   .auth-safety {
     font-size:9px
+  }
+}
+@media(max-width:400px) {
+  .header {
+    height:auto;
+    min-height:88px;
+    flex-wrap:wrap;
+    gap:12px;
+    padding-top:18px;
+    padding-bottom:18px
+  }
+  .brand {
+    flex:none
+  }
+  .header-right {
+    width:100%;
+    justify-content:space-between
   }
 }
 @media(prefers-reduced-motion:reduce) {
