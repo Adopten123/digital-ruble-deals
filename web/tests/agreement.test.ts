@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApiError } from '../src/lib/api.ts';
 import type { Deal } from '../src/lib/api.ts';
-import { agreementStorageKey, agreeDealInput, definitiveAgreementFailure, MAX_PDF_BYTES, pdfIdentity, readPendingAgreement, removePendingAgreement, reworkDealInput, updateDealInput, verifyPendingPdf } from '../src/lib/agreement.ts';
+import { agreementStorageKey, agreeDealInput, definitiveAgreementFailure, MAX_PDF_BYTES, pdfIdentity, readPendingAgreement, removePendingAgreement, reserveDealInput, reworkDealInput, updateDealInput, verifyPendingPdf } from '../src/lib/agreement.ts';
 import { localDateTime } from '../src/lib/deals.ts';
 
 const deal = {
@@ -43,6 +43,7 @@ test('every intact pending command survives serialization without replacing its 
     { kind: 'agree', input: agreeDealInput(deal) },
     { kind: 'rework', input: reworkDealInput(deal, 'Уточнить условия') },
     { kind: 'upload', input: { expected_deal_version: 3, file_name: 'акт.pdf', size_bytes: 500, sha256: 'a'.repeat(64) } },
+    { kind: 'reserve', input: { deal_version: 3 } },
   ];
   for (const command of commands) {
     const attempt = { ...command, key, dealId: deal.id };
@@ -91,4 +92,20 @@ test('PDF retry requires identical bytes, preserves the original name and reject
 test('unknown outcome and identity conflicts retain the command; semantic failures allow correction', () => {
   for (const error of [new TypeError('lost response'), new ApiError(503, 'TEMPORARILY_UNAVAILABLE'), new ApiError(409, 'IDEMPOTENCY_CONFLICT'), new ApiError(409, 'SESSION_CHANGED'), new ApiError(403, 'CSRF_INVALID'), new ApiError(401, 'AUTH_REQUIRED'), new ApiError(500, 'INTERNAL_ERROR')]) assert.equal(definitiveAgreementFailure(error), false);
   for (const error of [new ApiError(409, 'VERSION_CONFLICT'), new ApiError(422, 'INVALID_PDF'), new ApiError(422, 'DEADLINE_PASSED')]) assert.equal(definitiveAgreementFailure(error), true);
+});
+
+test('reserve requires both distinct parties to agree the same current document, never duplicate old consents', () => {
+  const agreed = { ...deal, status: 'AGREED' as const, reserve: null, customer_party_id: 'customer-a', agreements: ['customer-a', 'supplier-a'].map(organisation_id => ({ id: organisation_id, organisation_id, user_id: `u-${organisation_id}`, created_at: '2026-10-22T00:00:00Z', ...agreeDealInput(deal) })) };
+  assert.deepEqual(reserveDealInput(agreed), { deal_version: 3 });
+  assert.throws(() => reserveDealInput({ ...agreed, status: 'DRAFT' }));
+  assert.throws(() => reserveDealInput({ ...agreed, agreements: [agreed.agreements[0], agreed.agreements[0]] }));
+  assert.throws(() => reserveDealInput({ ...agreed, agreements: agreed.agreements.map(item => ({ ...item, document_version: 1 })) }));
+  assert.throws(() => reserveDealInput({ ...agreed, agreements: agreed.agreements.map(item => ({ ...item, document_sha256: 'b'.repeat(64) })) }));
+});
+
+test('server PDF validation and insufficient funds are final refusals with safe messages', () => {
+  const invalid = new ApiError(422, 'INVALID_DOCUMENT');
+  assert.match(invalid.message, /PDF/);
+  assert.equal(definitiveAgreementFailure(invalid), true);
+  assert.equal(definitiveAgreementFailure(new ApiError(422, 'INSUFFICIENT_AVAILABLE_FUNDS')), true);
 });

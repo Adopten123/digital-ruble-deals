@@ -1,5 +1,5 @@
 import { ApiError } from './api.ts';
-import type { AgreeDealInput, Deal, GenerateDocumentInput, ReworkDealInput, UpdateDealInput } from './api.ts';
+import type { AgreeDealInput, Deal, GenerateDocumentInput, ReserveDealInput, ReworkDealInput, UpdateDealInput } from './api.ts';
 import { createDealInput, localDateTime, readPendingDeal } from './deals.ts';
 
 export const MAX_PDF_BYTES = 5 * 1024 * 1024;
@@ -8,6 +8,7 @@ export type AgreementCommand =
   | { kind: 'generate'; input: GenerateDocumentInput }
   | { kind: 'agree'; input: AgreeDealInput }
   | { kind: 'rework'; input: ReworkDealInput }
+  | { kind: 'reserve'; input: ReserveDealInput }
   | { kind: 'upload'; input: { expected_deal_version: number; file_name: string; size_bytes: number; sha256: string } };
 export type PendingAgreement = AgreementCommand & { key: string; dealId: string };
 
@@ -46,6 +47,9 @@ export function readPendingAgreement(serialized: string | null, dealId: string):
         break;
       case 'rework':
         if (!exactKeys(input, ['deal_version', 'reason']) || !version(attempt.input.deal_version) || !nonempty(attempt.input.reason, 2000)) throw new Error();
+        break;
+      case 'reserve':
+        if (!exactKeys(input, ['deal_version']) || !version(attempt.input.deal_version)) throw new Error();
         break;
       case 'upload':
         if (!exactKeys(input, ['expected_deal_version', 'file_name', 'size_bytes', 'sha256'])
@@ -90,6 +94,18 @@ export function reworkDealInput(deal: Deal, reason: string): ReworkDealInput {
   return { deal_version: deal.deal_version, reason };
 }
 
+export function reserveDealInput(deal: Deal): ReserveDealInput {
+  if (deal.status !== 'AGREED' || deal.reserve) throw new Error('Резерв доступен только для согласованной сделки без активного резерва.');
+  const context = agreeDealInput(deal);
+  const parties = new Set(deal.agreements.filter(item => item.deal_version === context.deal_version
+    && item.document_id === context.document_id && item.document_version === context.document_version
+    && item.document_sha256 === context.document_sha256).map(item => item.organisation_id));
+  if (!parties.has(deal.customer_party_id) || !parties.has(deal.supplier_party_id) || deal.customer_party_id === deal.supplier_party_id) {
+    throw new Error('Нужны согласия заказчика и исполнителя на актуальную версию PDF.');
+  }
+  return { deal_version: context.deal_version };
+}
+
 export async function pdfIdentity(file: File): Promise<{ file_name: string; size_bytes: number; sha256: string }> {
   if (!/\.pdf$/i.test(file.name) || (file.type && file.type !== 'application/pdf')) throw new Error('Выберите PDF-документ с расширением .pdf.');
   if (!file.size || file.size > MAX_PDF_BYTES) throw new Error('PDF должен быть непустым, размером не более 5 МиБ.');
@@ -112,7 +128,7 @@ export async function verifyPendingPdf(attempt: Extract<PendingAgreement, { kind
 export function definitiveAgreementFailure(error: unknown): boolean {
   return error instanceof ApiError && [
     'INVALID_REQUEST', 'INVALID_AMOUNT', 'AMOUNT_OVERFLOW', 'DEADLINE_PASSED', 'RESOURCE_NOT_FOUND',
-    'IDEMPOTENCY_KEY_REQUIRED', 'VERSION_CONFLICT', 'INVALID_STATE', 'DOCUMENT_REQUIRED', 'INVALID_PDF',
-    'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_MEDIA_TYPE', 'FORBIDDEN',
+    'IDEMPOTENCY_KEY_REQUIRED', 'VERSION_CONFLICT', 'INVALID_STATE', 'DOCUMENT_REQUIRED', 'INVALID_PDF', 'INVALID_DOCUMENT',
+    'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_MEDIA_TYPE', 'FORBIDDEN', 'INSUFFICIENT_AVAILABLE_FUNDS', 'CONSENTS_MISSING', 'DOCUMENT_MISMATCH',
   ].includes(error.code);
 }

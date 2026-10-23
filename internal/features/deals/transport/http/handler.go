@@ -23,6 +23,7 @@ type Service interface {
 	Upload(context.Context, service.Actor, string, string, int64, string, []byte) (service.Result, error)
 	Document(context.Context, service.Actor, string, *int64) (service.Document, error)
 	DocumentBytes(context.Context, service.Actor, string, int64) (service.Document, []byte, error)
+	Reserve(context.Context, service.Actor, string, string, service.ReserveInput) (service.Result, error)
 }
 type Handler struct {
 	service Service
@@ -37,6 +38,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("PATCH /api/v1/deals/{id}", require(http.HandlerFunc(h.patch)))
 	mux.Handle("POST /api/v1/deals/{id}/agree", require(http.HandlerFunc(h.agree)))
 	mux.Handle("POST /api/v1/deals/{id}/rework", require(http.HandlerFunc(h.rework)))
+	mux.Handle("POST /api/v1/deals/{id}/reserve", require(http.HandlerFunc(h.reserve)))
 	mux.Handle("POST /api/v1/deals/{id}/documents/generate", require(http.HandlerFunc(h.generate)))
 	mux.Handle("POST /api/v1/deals/{id}/documents", require(http.HandlerFunc(h.upload)))
 	mux.Handle("GET /api/v1/documents/{id}", require(http.HandlerFunc(h.document)))

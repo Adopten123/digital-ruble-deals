@@ -25,6 +25,9 @@ import (
 	dealrepo "github.com/Adopten123/digital-ruble-deals/internal/features/deals/repository/postgres"
 	dealservice "github.com/Adopten123/digital-ruble-deals/internal/features/deals/service"
 	dealhttp "github.com/Adopten123/digital-ruble-deals/internal/features/deals/transport/http"
+	settlementrepo "github.com/Adopten123/digital-ruble-deals/internal/features/settlement/repository/postgres"
+	settlementservice "github.com/Adopten123/digital-ruble-deals/internal/features/settlement/service"
+	settlementhttp "github.com/Adopten123/digital-ruble-deals/internal/features/settlement/transport/http"
 	"github.com/Adopten123/digital-ruble-deals/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -87,6 +90,7 @@ func (f *fixture) handler(t *testing.T) http.Handler {
 	mux := http.NewServeMux()
 	auth.RegisterRoutes(mux)
 	dealhttp.New(dealservice.New(dealrepo.New(f.pool), make([]byte, 32), f.files), csrf).RegisterRoutes(mux, auth.Require)
+	settlementhttp.New(settlementservice.New(settlementrepo.New(f.pool), make([]byte, 32)), csrf).RegisterRoutes(mux, auth.Require)
 	return httpapi.Middleware(slog.New(slog.NewTextHandler(io.Discard, nil)), mux)
 }
 func (f *fixture) accountSnapshot(t *testing.T) string {

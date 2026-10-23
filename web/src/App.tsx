@@ -4,6 +4,7 @@ import { api, ApiError, describeError } from './lib/api';
 import type { Counterparty, OrganisationKind, OwnOrganisation, Session } from './lib/api';
 import { formatRubles, validateBalances } from './lib/money';
 import Deals from './Deals';
+import DemoAccounts from './DemoAccounts';
 
 type Readiness = 'checking' | 'ready' | 'unavailable';
 
@@ -187,7 +188,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
         <span className="process-line" aria-hidden="true" />
         <div><span className="step-number">03</span><strong>Подписать</strong><p>Две подписи и проверка условий расчёта</p></div>
       </div>
-      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте сделки, добавляйте PDF и согласуйте актуальную версию с контрагентом. Резервы, подписи и расчёты появятся в следующих обновлениях.</p>
+      <p className="stage-note"><span aria-hidden="true">i</span>Создавайте сделки, согласуйте PDF и резервируйте тестовые средства. Подписи и расчёты появятся в следующих обновлениях.</p>
     </section>
     <section className="auth-card panel" aria-label="Доступ в приложение">
       <div className="auth-tabs" aria-label="Выбор формы">
@@ -232,7 +233,8 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
 }
 
 function Workspace({ session, onUnauthorized }: { session: Session; onUnauthorized: (error: unknown) => void }) {
-  const [tab, setTab] = useState<'account' | 'deals' | 'catalog'>('account');
+  const [tab, setTab] = useState<'account' | 'deals' | 'catalog' | 'demo'>('account');
+  const isOperator = session.user.system_role === 'DEMO_OPERATOR';
   return <div className="workspace">
     <div className="workspace-heading">
       <div><div className="eyebrow">{session.organisation ? 'Кабинет организации' : 'Учебный оператор'}</div>
@@ -244,14 +246,16 @@ function Workspace({ session, onUnauthorized }: { session: Session; onUnauthoriz
     <nav className="workspace-tabs" aria-label="Разделы кабинета">
       <button className={tab === 'account' ? 'active' : ''} aria-current={tab === 'account' ? 'page' : undefined} onClick={() => setTab('account')}>{session.organisation ? 'Мой счёт' : 'Обзор'}</button>
       {session.organisation && <button className={tab === 'deals' ? 'active' : ''} aria-current={tab === 'deals' ? 'page' : undefined} onClick={() => setTab('deals')}>Сделки</button>}
+      {isOperator && <button className={tab === 'demo' ? 'active' : ''} aria-current={tab === 'demo' ? 'page' : undefined} onClick={() => setTab('demo')}>Учебные счета</button>}
       <button className={tab === 'catalog' ? 'active' : ''} aria-current={tab === 'catalog' ? 'page' : undefined} onClick={() => setTab('catalog')}>Контрагенты</button>
     </nav>
-    {tab === 'deals' && session.organisation ? <Deals key={session.user.id} organisation={session.organisation} onUnauthorized={onUnauthorized} />
+    {tab === 'demo' && isOperator ? <DemoAccounts key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
+      : tab === 'deals' && session.organisation ? <Deals key={session.user.id} organisation={session.organisation} onUnauthorized={onUnauthorized} />
       : tab === 'catalog' ? <Catalog key={session.user.id} ownId={session.organisation?.id} onUnauthorized={onUnauthorized} />
       : session.organisation ? <Account key={session.user.id} session={session} onUnauthorized={onUnauthorized} />
         : <section className="panel operator-scope"><div className="section-icon" aria-hidden="true">↳</div><h2>Отдельный доступ оператора</h2>
           <p>У этого аккаунта нет собственной организации и счёта. Оператор не подписывает документы за стороны и не согласует их условия.</p>
-          <p className="muted">Управление учебными сценариями будет добавлено вместе с денежным ядром и имитатором ЭДО. Сейчас доступен каталог организаций.</p>
+          <p className="muted">{isOperator ? 'Доступны учебные счета, тестовые зачисления и служебные списания с учётом активных резервов. Имитатор ЭДО появится на следующем этапе.' : 'У аккаунта нет доступа к денежным операциям оператора.'}</p>
           <button type="button" className="button button-primary" onClick={() => setTab('catalog')}>Открыть каталог<span aria-hidden="true">↗</span></button>
         </section>}
   </div>;
@@ -300,7 +304,7 @@ function Account({ session, onUnauthorized }: { session: Session; onUnauthorized
     </section>
     <div className="overview-grid">
       <section className="panel next-stage"><div className="section-icon" aria-hidden="true">↗</div><span className="tag">Следующий этап</span><h2>От условий к расчёту</h2>
-        <p>В разделе «Сделки» доступны условия, PDF и согласование обеими сторонами. Следующий этап — резервирование, две тестовые подписи и расчёт по проверенному событию.</p>
+        <p>В разделе «Сделки» доступны условия, PDF, два согласия и резерв полной суммы. Следующий этап — две тестовые подписи и расчёт по проверенному событию.</p>
         <div className="future-flow"><span>Согласование</span><span aria-hidden="true">→</span><span>Резерв</span><span aria-hidden="true">→</span><span>Две подписи</span><span aria-hidden="true">→</span><span>Расчёт</span></div>
       </section>
       <section className="panel organisation-info"><h2>Ваша организация</h2><dl><div><dt>Название</dt><dd>{session.organisation?.name}</dd></div><div><dt>Идентификатор</dt><dd><code>{session.organisation?.id}</code></dd></div><div><dt>Доступ</dt><dd>Владелец учебной организации</dd></div></dl><p className="field-help">Права проверяются сервером для каждого запроса.</p></section>

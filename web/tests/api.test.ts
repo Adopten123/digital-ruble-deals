@@ -191,3 +191,35 @@ test('authenticated document reads require a concrete PDF version and do not ope
   fail = true;
   await assert.rejects(client.documentFile('doc/a', 5), /неизвестного формата/);
 });
+
+test('reserve and operator money requests keep exact bodies, keys, actor and encoded resource scope', async () => {
+  const calls: { url: string; options: RequestInit }[] = [];
+  const client = new ApiClient(async (url, options) => {
+    calls.push({ url: String(url), options: options! });
+    return Response.json(String(url).endsWith('/csrf') ? { csrf_token: 'reserve-csrf' } : {});
+  });
+  client.bindIdentity('displayed-owner');
+  await client.reserveDeal('deal/a', { deal_version: 9 }, 'reserve-stable-key');
+  await client.demoMoney('account/a', 'debits', { amount_kopecks: '9007199254740993', reason: 'Учебное списание' }, 'debit-stable-key');
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].url, '/api/v1/deals/deal%2Fa/reserve');
+  assert.deepEqual(JSON.parse(calls[1].options.body as string), { deal_version: 9 });
+  assert.equal(calls[2].url, '/api/v1/demo/accounts/account%2Fa/debits');
+  assert.deepEqual(JSON.parse(calls[2].options.body as string), { amount_kopecks: '9007199254740993', reason: 'Учебное списание' });
+  assert.equal(new Headers(calls[2].options.headers).get('Idempotency-Key'), 'debit-stable-key');
+  assert.equal(new Headers(calls[1].options.headers).get('X-Expected-User-ID'), 'displayed-owner');
+});
+
+test('operator search and pagination carry only query, opaque cursor and the bound actor', async () => {
+  let received = '';
+  let headers = new Headers();
+  const client = new ApiClient(async (url, options) => { received = String(url); headers = new Headers(options?.headers); return Response.json({ items: [], next_cursor: null }); });
+  client.bindIdentity('operator-visible');
+  await client.demoAccounts('Счёт & ИП', 'opaque+/=');
+  const params = new URL(received, 'http://localhost').searchParams;
+  assert.equal(params.get('q'), 'Счёт & ИП');
+  assert.equal(params.get('cursor'), 'opaque+/=');
+  assert.equal(params.get('limit'), '20');
+  assert.equal(headers.get('X-Expected-User-ID'), 'operator-visible');
+  assert.equal(params.has('user_id'), false);
+});

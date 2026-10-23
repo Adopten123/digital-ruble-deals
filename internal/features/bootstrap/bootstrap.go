@@ -23,6 +23,10 @@ func Run(ctx context.Context, pool *pgxpool.Pool) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(7061657475002)`); err != nil {
 			return err
 		}
+		// Add the fixed test-debit destination on upgrade without reseeding money.
+		if _, err := tx.Exec(ctx, `INSERT INTO accounts(id,system_purpose) VALUES('poaktu-demo-debits-v1','DEMO_DEBITS') ON CONFLICT(system_purpose) DO NOTHING`); err != nil {
+			return err
+		}
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bootstrap_runs WHERE name=$1)`, Name).Scan(&exists); err != nil {
 			return err
@@ -107,7 +111,9 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) error {
  AND to_regclass('users') IS NOT NULL AND to_regclass('sessions') IS NOT NULL AND to_regclass('accounts') IS NOT NULL
  AND to_regclass('deals') IS NOT NULL AND to_regclass('deal_versions') IS NOT NULL AND to_regclass('idempotency_keys') IS NOT NULL
  AND to_regclass('audit_events') IS NOT NULL AND to_regclass('outbox') IS NOT NULL
- AND to_regclass('documents') IS NOT NULL AND to_regclass('document_versions') IS NOT NULL AND to_regclass('deal_agreements') IS NOT NULL`, corepg.SchemaVersion, Name).Scan(&ready)
+ AND to_regclass('documents') IS NOT NULL AND to_regclass('document_versions') IS NOT NULL AND to_regclass('deal_agreements') IS NOT NULL
+ AND to_regclass('reserves') IS NOT NULL AND to_regclass('operator_command_results') IS NOT NULL
+ AND EXISTS(SELECT 1 FROM accounts WHERE system_purpose='DEMO_DEBITS')`, corepg.SchemaVersion, Name).Scan(&ready)
 	if err != nil {
 		return err
 	}
