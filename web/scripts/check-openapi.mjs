@@ -1,5 +1,5 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const root = new URL('../../', import.meta.url);
@@ -14,7 +14,13 @@ inspect(spec);
 await SwaggerParser.validate(structuredClone(spec), { resolve: { external: false } });
 const documented = Object.entries(spec.paths).flatMap(([path, methods]) => Object.keys(methods).map(method => `${method.toUpperCase()} ${path}`)).sort();
 const registered = [];
-for (const path of ['cmd/poaktu/main.go', 'internal/features/auth/transport/http/handler.go', 'internal/features/organizations/transport/http/handler.go', 'internal/features/deals/transport/http/handler.go']) {
+async function goFiles(directory) {
+  const entries = await readdir(new URL(directory, root), { withFileTypes: true });
+  const files = await Promise.all(entries.map(entry => entry.isDirectory() ? goFiles(`${directory}${entry.name}/`)
+    : entry.name.endsWith('.go') && !entry.name.endsWith('_test.go') ? [`${directory}${entry.name}`] : []));
+  return files.flat();
+}
+for (const path of ['cmd/poaktu/main.go', ...await goFiles('internal/features/')]) {
   const source = await readFile(new URL(path, root), 'utf8');
   for (const match of source.matchAll(/mux\.Handle(?:Func)?\("((?:GET|POST|PATCH|PUT|DELETE) [^"]+)"/g)) registered.push(match[1]);
 }

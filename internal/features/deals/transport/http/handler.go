@@ -16,6 +16,13 @@ type Service interface {
 	Create(context.Context, service.Actor, string, service.Input) (service.Result, error)
 	List(context.Context, service.Actor, service.Filters, string) (service.Page, error)
 	Get(context.Context, service.Actor, string) (service.Deal, error)
+	Patch(context.Context, service.Actor, string, string, service.PatchInput) (service.Result, error)
+	Agree(context.Context, service.Actor, string, string, service.AgreeInput) (service.Result, error)
+	Rework(context.Context, service.Actor, string, string, service.ReworkInput) (service.Result, error)
+	Generate(context.Context, service.Actor, string, string, service.GenerateInput) (service.Result, error)
+	Upload(context.Context, service.Actor, string, string, int64, string, []byte) (service.Result, error)
+	Document(context.Context, service.Actor, string, *int64) (service.Document, error)
+	DocumentBytes(context.Context, service.Actor, string, int64) (service.Document, []byte, error)
 }
 type Handler struct {
 	service Service
@@ -27,6 +34,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("POST /api/v1/deals", require(http.HandlerFunc(h.create)))
 	mux.Handle("GET /api/v1/deals", require(http.HandlerFunc(h.list)))
 	mux.Handle("GET /api/v1/deals/{id}", require(http.HandlerFunc(h.get)))
+	mux.Handle("PATCH /api/v1/deals/{id}", require(http.HandlerFunc(h.patch)))
+	mux.Handle("POST /api/v1/deals/{id}/agree", require(http.HandlerFunc(h.agree)))
+	mux.Handle("POST /api/v1/deals/{id}/rework", require(http.HandlerFunc(h.rework)))
+	mux.Handle("POST /api/v1/deals/{id}/documents/generate", require(http.HandlerFunc(h.generate)))
+	mux.Handle("POST /api/v1/deals/{id}/documents", require(http.HandlerFunc(h.upload)))
+	mux.Handle("GET /api/v1/documents/{id}", require(http.HandlerFunc(h.document)))
+	mux.Handle("GET /api/v1/documents/{id}/view", require(http.HandlerFunc(h.view)))
+	mux.Handle("GET /api/v1/documents/{id}/download", require(http.HandlerFunc(h.download)))
 }
 func actor(r *http.Request) service.Actor {
 	identity, ok := authhttp.CurrentIdentity(r.Context())

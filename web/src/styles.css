@@ -1553,3 +1553,48 @@ textarea { resize:vertical; line-height:1.65 }
     transition:none!important
   }
 }
+.agreement-panel { margin-top:20px; padding:28px; min-width:0; overflow-wrap:anywhere }
+.agreement-panel h3 { font-size:20px; margin-bottom:10px }
+.agreement-panel h4 { font-size:15px; margin:0 0 14px }
+.agreement-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:20px }
+.agreement-heading>div { min-width:0 }
+.agreement-heading>div>p { font-size:12px; margin-bottom:0; line-height:1.7 }
+.agreement-heading>.button { flex:none; font-size:12px }
+.agreement-panel>.notice { margin:20px 0 }
+.agreement-edit { padding:22px 0; margin-top:20px; border-top:1px solid var(--border) }
+.agreement-document,.agreement-consents { border-top:1px solid var(--border); margin-top:24px; padding-top:24px; min-width:0 }
+.document-facts { margin:0 0 20px; font-size:12px }
+.document-facts>div { display:grid; grid-template-columns:90px minmax(0,1fr); gap:18px; padding:9px 0 }
+.document-facts dt { color:var(--muted) }
+.document-facts dd { margin:0; min-width:0; overflow-wrap:anywhere }
+.document-hash { overflow-wrap:anywhere; word-break:break-all; font-size:11px; line-height:1.7 }
+.agreement-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:17px; align-items:center }
+.agreement-actions .button { font-size:12px; white-space:normal; max-width:100%; text-decoration:none; text-align:center }
+.agreement-panel .notice>.button { align-self:flex-start; font-size:12px; white-space:normal; max-width:100% }
+.document-upload { background:#f5f8fc; border:1px solid var(--border); border-radius:12px; padding:20px; margin-top:20px; min-width:0 }
+.document-upload>label { margin-top:0 }
+.document-upload input[type="file"] { font-size:12px; padding:10px; min-width:0; max-width:100%; overflow:hidden }
+.agreement-consents ul { list-style:none; padding:0; margin:0 0 22px }
+.agreement-consents li { display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid var(--border); padding:14px 0; font-size:12px }
+.agreement-consents li>div { min-width:0 }
+.agreement-consents li strong { display:block; overflow-wrap:anywhere }
+.agreement-consents li>div>span { display:block; margin-top:5px; color:var(--muted); font-size:11px }
+.agreement-consents li>.tag { flex:none; white-space:normal; text-align:center; max-width:145px; line-height:1.6 }
+.agreement-confirmed { background:#e6f5ee; color:#26764f }
+.checkbox-label { display:flex; gap:12px; align-items:flex-start; font-size:12px; font-weight:400; line-height:1.8; margin:0 0 18px }
+.checkbox-label>input { width:19px; height:19px; min-height:19px; flex:none; margin:3px 0 0; accent-color:var(--blue) }
+.agreement-confirm { margin:18px 0 22px }
+.agreement-confirm>.button,.rework-form>.button { font-size:12px; white-space:normal; max-width:100% }
+.rework-form { margin-top:20px }
+@media(max-width:700px) {
+  .agreement-panel { padding:22px }
+  .agreement-heading { flex-direction:column; gap:15px }
+  .agreement-heading>.button { flex:auto; max-width:100%; white-space:normal }
+  .document-facts>div { grid-template-columns:75px minmax(0,1fr); gap:12px; font-size:11px }
+  .document-upload { padding:15px }
+  .agreement-actions { align-items:stretch }
+  .agreement-actions>.button { flex:1 1 150px; justify-content:center }
+  .agreement-consents li { align-items:flex-start; flex-direction:column; gap:10px }
+  .agreement-consents li>.tag { max-width:100% }
+  .agreement-confirm>.button,.rework-form>.button { width:100%; justify-content:center }
+}

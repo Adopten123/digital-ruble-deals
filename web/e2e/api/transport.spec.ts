@@ -18,7 +18,7 @@ test('health and readiness identify the test contour and implemented stage', asy
       const response = await client.get(path);
       expect(response.status()).toBe(200);
       expect(await response.json()).toMatchObject(path === '/readyz'
-        ? { status: 'ready', contour: 'test', stage: 'deal_drafts' }
+        ? { status: 'ready', contour: 'test', stage: 'deal_agreement' }
         : { status: 'ok', contour: 'test' });
     }
   } finally {

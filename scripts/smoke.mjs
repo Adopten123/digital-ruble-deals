@@ -62,7 +62,7 @@ async function ready() {
       if (response.status === 200) {
         const body = await response.json();
         assert.equal(body.contour, 'test');
-        assert.equal(body.stage, 'deal_drafts');
+        assert.equal(body.stage, 'deal_agreement');
         return;
       }
     } catch (error) {

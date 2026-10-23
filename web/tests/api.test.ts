@@ -126,3 +126,68 @@ test('a late 401 for the previous actor cannot clear the new actor CSRF cache', 
   assert.equal(await client.csrf(), 'new-actor-token');
   assert.equal(csrfReads, 1);
 });
+
+test('agreement commands preserve version bindings, command keys and the displayed actor', async () => {
+  const calls: { path: string; options: RequestInit }[] = [];
+  const client = new ApiClient(async (url, options) => {
+    calls.push({ path: String(url), options: options! });
+    return Response.json(String(url).endsWith('/csrf') ? { csrf_token: 'csrf-agreement' } : {});
+  });
+  client.bindIdentity('visible-actor');
+  const update = { expected_version: 7, title: 'Новые условия' };
+  const agree = { deal_version: 8, document_id: 'doc-a', document_version: 4, document_sha256: 'a'.repeat(64) };
+  const rework = { deal_version: 8, reason: 'Уточнить результат' };
+  const generate = { expected_deal_version: 7, template_id: 'printing-acceptance-v1' as const };
+  await client.updateDeal('deal/a', update, 'fixed-key-update');
+  await client.agreeDeal('deal/a', agree, 'fixed-key-agree');
+  await client.reworkDeal('deal/a', rework, 'fixed-key-rework');
+  await client.generateDocument('deal/a', generate, 'fixed-key-generate');
+  const commands = calls.slice(1);
+  assert.equal(commands[0].path, '/api/v1/deals/deal%2Fa');
+  assert.equal(commands[0].options.method, 'PATCH');
+  assert.deepEqual(commands.map(item => JSON.parse(item.options.body as string)), [update, agree, rework, generate]);
+  for (const command of commands) {
+    const headers = new Headers(command.options.headers);
+    assert.equal(headers.get('X-Expected-User-ID'), 'visible-actor');
+    assert.equal(headers.get('X-CSRF-Token'), 'csrf-agreement');
+    assert.ok(headers.get('Idempotency-Key')?.startsWith('fixed-key-'));
+  }
+});
+
+test('multipart retry sends exact PDF bytes and original filename without setting a random boundary', async () => {
+  const calls: { path: string; options: RequestInit }[] = [];
+  const client = new ApiClient(async (url, options) => {
+    calls.push({ path: String(url), options: options! });
+    return Response.json(String(url).endsWith('/csrf') ? { csrf_token: 'csrf-pdf' } : {});
+  });
+  client.bindIdentity('pdf-owner');
+  const blob = new Blob(['%PDF-1.7\nsaved bytes\n%%EOF'], { type: 'application/pdf' });
+  await client.uploadDocument('deal/a', 7, blob, 'original.pdf', 'fixed-upload-key');
+  const call = calls[1];
+  const headers = new Headers(call.options.headers);
+  assert.equal(call.path, '/api/v1/deals/deal%2Fa/documents');
+  assert.equal(headers.get('Content-Type'), null, 'browser supplies the multipart boundary');
+  assert.equal(headers.get('X-Expected-User-ID'), 'pdf-owner');
+  assert.equal(headers.get('Idempotency-Key'), 'fixed-upload-key');
+  const form = call.options.body as FormData;
+  assert.equal(form.get('expected_deal_version'), '7');
+  assert.equal((form.get('file') as File).name, 'original.pdf');
+  assert.equal(await (form.get('file') as File).text(), await blob.text());
+});
+
+test('authenticated document reads require a concrete PDF version and do not open non-PDF responses', async () => {
+  const calls: { path: string; headers: Headers }[] = [];
+  let fail = false;
+  const client = new ApiClient(async (url, options) => {
+    calls.push({ path: String(url), headers: new Headers(options?.headers) });
+    if (fail) return new Response('<html>wrong</html>', { headers: { 'Content-Type': 'text/html' } });
+    return new Response('%PDF-1.7\nbytes', { headers: { 'Content-Type': 'application/pdf' } });
+  });
+  client.bindIdentity('visible-user');
+  assert.equal(await (await client.documentFile('doc/a', 5)).text(), '%PDF-1.7\nbytes');
+  await client.documentFile('doc/a', 3, true);
+  assert.deepEqual(calls.map(item => item.path), ['/api/v1/documents/doc%2Fa/view?version=5', '/api/v1/documents/doc%2Fa/download?version=3']);
+  assert.equal(calls[0].headers.get('X-Expected-User-ID'), 'visible-user');
+  fail = true;
+  await assert.rejects(client.documentFile('doc/a', 5), /неизвестного формата/);
+});

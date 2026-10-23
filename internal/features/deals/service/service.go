@@ -26,32 +26,37 @@ type Party struct {
 	Kind string `json:"kind"`
 }
 type Deal struct {
-	ID                  string    `json:"id"`
-	DealVersion         int64     `json:"deal_version"`
-	Status              string    `json:"status"`
-	CustomerPartyID     string    `json:"customer_party_id"`
-	SupplierPartyID     string    `json:"supplier_party_id"`
-	Title               string    `json:"title"`
-	Description         string    `json:"description"`
-	AmountKopecks       string    `json:"amount_kopecks"`
-	Currency            string    `json:"currency"`
-	DeadlineAt          time.Time `json:"deadline_at"`
-	Customer            Party     `json:"customer"`
-	Supplier            Party     `json:"supplier"`
-	Document            any       `json:"document"`
-	Agreements          []any     `json:"agreements"`
-	Signatures          []any     `json:"signatures"`
-	Reserve             any       `json:"reserve"`
-	PaymentID           *string   `json:"payment_id"`
-	Dispute             any       `json:"dispute"`
-	CancellationRequest any       `json:"cancellation_request"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                  string      `json:"id"`
+	DealVersion         int64       `json:"deal_version"`
+	Status              string      `json:"status"`
+	CustomerPartyID     string      `json:"customer_party_id"`
+	SupplierPartyID     string      `json:"supplier_party_id"`
+	Title               string      `json:"title"`
+	Description         string      `json:"description"`
+	AmountKopecks       string      `json:"amount_kopecks"`
+	Currency            string      `json:"currency"`
+	DeadlineAt          time.Time   `json:"deadline_at"`
+	Customer            Party       `json:"customer"`
+	Supplier            Party       `json:"supplier"`
+	Document            *Document   `json:"document"`
+	Agreements          []Agreement `json:"agreements"`
+	Signatures          []any       `json:"signatures"`
+	Reserve             any         `json:"reserve"`
+	PaymentID           *string     `json:"payment_id"`
+	Dispute             any         `json:"dispute"`
+	CancellationRequest any         `json:"cancellation_request"`
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
 }
 
 func (d *Deal) Normalize() {
 	d.DeadlineAt, d.CreatedAt, d.UpdatedAt = d.DeadlineAt.UTC(), d.CreatedAt.UTC(), d.UpdatedAt.UTC()
-	d.Agreements, d.Signatures = []any{}, []any{}
+	if d.Agreements == nil {
+		d.Agreements = []Agreement{}
+	}
+	if d.Signatures == nil {
+		d.Signatures = []any{}
+	}
 }
 
 type Input struct {
@@ -108,12 +113,17 @@ type Repository interface {
 	Get(context.Context, Actor, string) (Deal, error)
 }
 type Service struct {
-	repo Repository
-	key  []byte
+	repo  Repository
+	key   []byte
+	files DocumentStore
 }
 
-func New(repo Repository, key []byte) *Service {
-	return &Service{repo: repo, key: append([]byte(nil), key...)}
+func New(repo Repository, key []byte, files ...DocumentStore) *Service {
+	s := &Service{repo: repo, key: append([]byte(nil), key...)}
+	if len(files) > 0 {
+		s.files = files[0]
+	}
+	return s
 }
 func ValidKey(key string) bool {
 	if len(key) < 16 || len(key) > 128 {

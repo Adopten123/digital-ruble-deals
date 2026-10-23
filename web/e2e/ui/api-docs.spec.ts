@@ -39,7 +39,9 @@ test('Swagger renders the implemented contract using local assets and executes h
   });
   await page.goto('/api-docs/');
   await expect(page.getByRole('heading', { name: 'Документация API', exact: true })).toBeVisible();
-  await expect(page.locator('.opblock')).toHaveCount(12);
+  const specification = await (await page.request.get('/api-docs/openapi.json')).json();
+  const count = Object.values(specification.paths).reduce((sum: number, methods) => sum + Object.keys(methods as object).length, 0);
+  await expect(page.locator('.opblock')).toHaveCount(count);
   const block = await openOperation(page, '/healthz');
   const received = page.waitForResponse(response => response.url().endsWith('/healthz'));
   await block.getByRole('button', { name: 'Execute', exact: true }).click();

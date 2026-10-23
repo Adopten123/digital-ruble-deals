@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Adopten123/digital-ruble-deals/internal/core/config"
+	"github.com/Adopten123/digital-ruble-deals/internal/core/documentfile"
 	corepg "github.com/Adopten123/digital-ruble-deals/internal/core/repository/postgres"
 	"github.com/Adopten123/digital-ruble-deals/internal/core/security"
 	httpapi "github.com/Adopten123/digital-ruble-deals/internal/core/transport/http"
@@ -118,10 +119,15 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 	csrf := httpapi.NewCSRF(key, cfg.AppOrigin, cfg.SecureCookies)
 	authHandler := authhttp.New(authService, csrf)
 	organizationService := orgservice.New(orgrepo.New(pool), key)
+	files, err := documentfile.NewStore(cfg.DocumentsDir)
+	if err != nil {
+		return errors.New("cannot initialize private document storage")
+	}
+	defer files.Close()
 	mux := http.NewServeMux()
 	authHandler.RegisterRoutes(mux)
 	orghttp.New(organizationService).RegisterRoutes(mux, authHandler.Require)
-	dealhttp.New(dealservice.New(dealrepo.New(pool), key), csrf).RegisterRoutes(mux, authHandler.Require)
+	dealhttp.New(dealservice.New(dealrepo.New(pool), key, files), csrf).RegisterRoutes(mux, authHandler.Require)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.JSON(w, 200, map[string]string{"status": "ok", "contour": "test"})
 	})
@@ -132,7 +138,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "deal_drafts"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "deal_agreement"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")
