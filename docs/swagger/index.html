@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>ПоАкту — документация API</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="./swagger-ui.css">
+    <link rel="stylesheet" href="./docs.css">
+  </head>
+  <body>
+    <header class="docs-header">
+      <a href="/">ПоАкту — в приложение</a>
+      <h1>Документация API</h1>
+      <p>Тестовый контур. Расчёты и ЭДО эмулируются.</p>
+      <p>Здесь только реализованные операции. Выполнение запросов меняет данные этого учебного стенда.</p>
+      <p>Для изменяющих запросов: выполните GET /api/v1/auth/csrf и вставьте токен в Authorize → csrfToken. После входа или регистрации замените его новым csrf_token из ответа. Cookie браузер передаёт сам; используйте тот же адрес, что и у приложения.</p>
+      <a href="./openapi.json" download>Скачать OpenAPI JSON</a>
+    </header>
+    <div id="swagger-ui"></div>
+    <script src="./swagger-ui-bundle.js"></script>
+    <script src="./init.js"></script>
+  </body>
+</html>

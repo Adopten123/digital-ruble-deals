@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+work
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+docs/research
+*.pptx
+web/public/api-docs
