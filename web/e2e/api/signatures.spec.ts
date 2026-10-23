@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { APIRequestContext, APIResponse, PlaywrightWorkerArgs } from '@playwright/test';
 import { test, expect, apiFor, csrf, draftInput, postDraft, E2E_BASE_URL, API_BASE_URL } from '../support.ts';
 
@@ -17,6 +18,26 @@ async function command(client: APIRequestContext, path: string, data: unknown, k
 }
 async function account(client: APIRequestContext) { return (await ok(await client.get('/api/v1/organisations/me'))).account; }
 async function read(client: APIRequestContext, id: string) { return ok(await client.get(`/api/v1/deals/${id}`)); }
+async function registerSynthetic(client: APIRequestContext) {
+  const data = {
+    email: `signature-${randomUUID()}@demo.poaktu.local`, password: 'SignatureSyntheticOnly2026!',
+    organisation: { name: `Подписи учебные ${randomUUID()}`, kind: 'COMPANY' },
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await client.post('/api/v1/auth/register', {
+      headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(client) }, data,
+    });
+    if (response.status() !== 429 || attempt === 1) return ok(response, 201);
+    // The fixture shares the real auth budget with earlier tests. Retry only an
+    // explicit refusal, with the same registration data and the server's delay.
+    await error(response, 429, 'RATE_LIMITED');
+    const seconds = Number(response.headers()['retry-after']);
+    expect(Number.isInteger(seconds) && seconds >= 1 && seconds <= 60).toBe(true);
+    test.setTimeout(test.info().timeout + seconds * 1000);
+    await test.step(`respect signature fixture auth budget: wait ${seconds}s before one retry`, async () => { await delay(seconds * 1000); });
+  }
+  throw new Error('Synthetic signature registration did not run');
+}
 async function laboratory(playwright: PlaywrightWorkerArgs['playwright']) {
   const customer = await playwright.request.newContext({ baseURL: API_BASE_URL, storageState: { cookies: [], origins: [] } });
   const operator = await apiFor(playwright, 'operator');
@@ -24,13 +45,7 @@ async function laboratory(playwright: PlaywrightWorkerArgs['playwright']) {
   const outsider = await apiFor(playwright, 'outsider');
   const clients = [customer, operator, supplier, outsider];
   try {
-    const identity = await ok(await customer.post('/api/v1/auth/register', {
-      headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(customer) },
-      data: {
-        email: `signature-${randomUUID()}@demo.poaktu.local`, password: 'SignatureSyntheticOnly2026!',
-        organisation: { name: `Подписи учебные ${randomUUID()}`, kind: 'COMPANY' },
-      },
-    }), 201);
+    const identity = await registerSynthetic(customer);
     const initial = await account(customer);
     expect(initial).toMatchObject({ total_kopecks: '0', reserved_kopecks: '0', available_kopecks: '0' });
     await ok(await command(operator, `/api/v1/demo/accounts/${initial.id}/credits`, {
