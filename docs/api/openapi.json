@@ -6665,15 +6665,6 @@
                       "request_id": "synthetic-request-id"
                     }
                   },
-                  "INVALID_AMOUNT": {
-                    "value": {
-                      "error": {
-                        "code": "INVALID_AMOUNT",
-                        "message": "Некорректное тело, типы, версия или Idempotency-Key."
-                      },
-                      "request_id": "synthetic-request-id"
-                    }
-                  },
                   "IDEMPOTENCY_KEY_REQUIRED": {
                     "value": {
                       "error": {
@@ -6735,15 +6726,6 @@
                   "$ref": "#/components/schemas/Error"
                 },
                 "examples": {
-                  "FORBIDDEN": {
-                    "value": {
-                      "error": {
-                        "code": "FORBIDDEN",
-                        "message": "Нет права либо CSRF / Origin не прошёл проверку."
-                      },
-                      "request_id": "synthetic-request-id"
-                    }
-                  },
                   "CSRF_INVALID": {
                     "value": {
                       "error": {
