@@ -109,10 +109,16 @@ test.describe('shared cookies must not change the actor behind an old cabinet', 
     const other = await context.newPage();
     await other.goto('/');
     await expect(other.locator('.balance-card')).toHaveCount(3);
+    // The click starts logout; only the completed 204 confirms server revocation.
+    const revoked = page.waitForResponse((response) => response.url().endsWith('/auth/logout') && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Выйти', exact: true }).click();
-    const rejected = other.waitForResponse((response) => response.url().endsWith('/organisations/me'));
+    expect((await revoked).status()).toBe(204);
+    await expect(page.getByRole('heading', { name: 'Рады видеть вас', exact: true })).toBeVisible();
+    const protectedRead = other.waitForRequest((request) => request.url().endsWith('/api/v1/organisations/me') && request.method() === 'GET');
     await other.getByRole('button', { name: 'Обновить', exact: true }).click();
-    expect((await rejected).status()).toBe(401);
+    const rejected = await (await protectedRead).response();
+    expect(rejected).not.toBeNull();
+    expect(rejected!.status()).toBe(401);
     for (const tab of [page, other]) {
       await tab.reload();
       await expect(tab.getByRole('heading', { name: 'Рады видеть вас', exact: true })).toBeVisible();
