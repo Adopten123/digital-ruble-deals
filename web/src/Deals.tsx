@@ -7,6 +7,7 @@ import { createDealInput, dateBoundary, localDateTime, pendingStorageKey, plainR
 import type { PendingDealAttempt } from './lib/deals';
 import SupplierPicker from './SupplierPicker';
 import DealAgreement from './DealAgreement';
+import AuditHistory from './AuditHistory';
 import { statusLabels } from './lib/blockers';
 
 type ScopeProps = { onUnauthorized: (error: unknown) => void };
@@ -25,7 +26,7 @@ function Failure({ error, retry }: { error: unknown; retry?: () => void }) {
 }
 function Busy({ children }: { children: string }) { return <div className="loading" role="status"><span className="spinner" aria-hidden="true" />{children}</div>; }
 
-export default function Deals({ organisation, onUnauthorized }: ScopeProps & { organisation: Organisation }) {
+export default function Deals({ organisation, userId, onUnauthorized }: ScopeProps & { organisation: Organisation; userId: string }) {
   const [view, setView] = useState<'list' | 'create' | 'detail'>('list');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -50,7 +51,7 @@ export default function Deals({ organisation, onUnauthorized }: ScopeProps & { o
     </>}
     {view === 'create' && <CreateDeal organisation={organisation} pending={pending} onPending={setPending} onUnauthorized={onUnauthorized}
       onBack={() => setView('list')} onCreated={(deal) => { setSelectedId(deal.id); setRevision((value) => value + 1); setCreated(true); setView('detail'); }} />}
-    {view === 'detail' && selectedId && <DealDetail id={selectedId} ownId={organisation.id} created={created} onUnauthorized={onUnauthorized} onBack={() => { setCreated(false); setView('list'); }} />}
+    {view === 'detail' && selectedId && <DealDetail userId={userId} id={selectedId} ownId={organisation.id} created={created} onUnauthorized={onUnauthorized} onBack={() => { setCreated(false); setView('list'); }} />}
   </section>;
 }
 
@@ -192,7 +193,7 @@ function CreateDeal({ organisation, pending, onPending, onCreated, onBack, onUna
   </>;
 }
 
-function DealDetail({ id, ownId, created, onBack, onUnauthorized }: ScopeProps & { id: string; ownId: string; created: boolean; onBack: () => void }) {
+function DealDetail({ id, ownId, userId, created, onBack, onUnauthorized }: ScopeProps & { id: string; ownId: string; userId: string; created: boolean; onBack: () => void }) {
   const [deal, setDeal] = useState<Deal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -231,6 +232,7 @@ function DealDetail({ id, ownId, created, onBack, onUnauthorized }: ScopeProps &
       <div className="deal-detail-grid"><section className="panel deal-conditions"><h3>Условия сделки</h3><div className="deal-condition-amount"><span>Полная сумма</span><strong>{formatRubles(deal.amount_kopecks)}</strong></div><dl className="deal-facts"><div><dt>Валюта</dt><dd>Российский рубль · RUB</dd></div><div><dt>Срок сделки</dt><dd>{dateLabel(deal.deadline_at)}<small>{Intl.DateTimeFormat().resolvedOptions().timeZone}</small></dd></div><div><dt>Создана</dt><dd>{dateLabel(deal.created_at)}</dd></div></dl><h3 className="deal-description-heading">Условия и результат работы</h3><p className="deal-description">{deal.description}</p></section>
         <section className="panel deal-parties"><h3>Участники</h3>{([{ label: 'Заказчик', party: deal.customer }, { label: 'Исполнитель', party: deal.supplier }]).map(({ label, party }) => <div className="deal-party" key={label}><span>{label}{party.id === ownId && <span className="mini-tag">Ваша организация</span>}</span><strong>{party.name}</strong><small>{party.kind === 'IP' ? 'Индивидуальный предприниматель' : 'Компания'}</small><code>{party.id}</code></div>)}<p className="field-help">Роль определяется для каждой сделки отдельно.</p></section></div>
       <DealAgreement deal={deal} ownId={ownId} onDeal={setDeal} onUnauthorized={onUnauthorized} />
+      <AuditHistory key={deal.id} dealId={deal.id} userId={userId} revision={deal.updated_at} onUnauthorized={onUnauthorized} />
     </>}
   </>;
 }
