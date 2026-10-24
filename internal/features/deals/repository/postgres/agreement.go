@@ -111,7 +111,7 @@ func (r *Repository) Mutate(ctx context.Context, cmd service.Mutation) (out serv
 		if !d.DeadlineAt.After(now) {
 			return reject(422, "DEADLINE_PASSED", "Срок сделки уже наступил")
 		}
-		if reserved || (rawStatus != "DRAFT" && rawStatus != "AGREED") {
+		if d.Dispute != nil || d.CancellationRequest != nil || len(d.ReviewReasons) > 0 || reserved || (rawStatus != "DRAFT" && rawStatus != "AGREED") {
 			return reject(409, "INVALID_STATE", "Состояние сделки не допускает это действие")
 		}
 		changed := false

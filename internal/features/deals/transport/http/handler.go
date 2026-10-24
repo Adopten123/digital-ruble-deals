@@ -25,6 +25,10 @@ type Service interface {
 	DocumentBytes(context.Context, service.Actor, string, int64) (service.Document, []byte, error)
 	Reserve(context.Context, service.Actor, string, string, service.ReserveInput) (service.Result, error)
 	Sign(context.Context, service.Actor, string, string, service.SignInput) (service.Result, error)
+	Dispute(context.Context, service.Actor, string, string, service.ReasonInput) (service.Result, error)
+	RequestCancellation(context.Context, service.Actor, string, string, service.ReasonInput) (service.Result, error)
+	AcceptCancellation(context.Context, service.Actor, string, string, string, service.CancelAcceptInput) (service.Result, error)
+	RejectCancellation(context.Context, service.Actor, string, string, string, service.ReasonInput) (service.Result, error)
 }
 type Handler struct {
 	service Service
@@ -40,6 +44,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, require func(http.Handler) 
 	mux.Handle("POST /api/v1/deals/{id}/agree", require(http.HandlerFunc(h.agree)))
 	mux.Handle("POST /api/v1/deals/{id}/rework", require(http.HandlerFunc(h.rework)))
 	mux.Handle("POST /api/v1/deals/{id}/reserve", require(http.HandlerFunc(h.reserve)))
+	mux.Handle("POST /api/v1/deals/{id}/disputes", require(http.HandlerFunc(h.dispute)))
+	mux.Handle("POST /api/v1/deals/{id}/cancellation-requests", require(http.HandlerFunc(h.requestCancellation)))
+	mux.Handle("POST /api/v1/deals/{id}/cancellation-requests/{request_id}/accept", require(http.HandlerFunc(h.acceptCancellation)))
+	mux.Handle("POST /api/v1/deals/{id}/cancellation-requests/{request_id}/reject", require(http.HandlerFunc(h.rejectCancellation)))
 	mux.Handle("POST /api/v1/deals/{id}/documents/generate", require(http.HandlerFunc(h.generate)))
 	mux.Handle("POST /api/v1/deals/{id}/documents", require(http.HandlerFunc(h.upload)))
 	mux.Handle("GET /api/v1/documents/{id}", require(http.HandlerFunc(h.document)))

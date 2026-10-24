@@ -72,3 +72,36 @@ func TestBootstrapRestartAndLedgerConstraints(t *testing.T) {
 		})
 	}
 }
+
+func TestReadinessRequiresTheCurrentSettlementSchemaAndAllFeatureTables(t *testing.T) {
+	pool := testutil.Database(t)
+	ctx := context.Background()
+	if err := bootstrap.Run(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Ready(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	var checksum string
+	if err := pool.QueryRow(ctx, "DELETE FROM schema_migrations WHERE version=$1 RETURNING checksum", corepg.SchemaVersion).Scan(&checksum); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Ready(ctx, pool); err == nil {
+		t.Fatal("old migration markers allowed payment API readiness")
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO schema_migrations(version,checksum) VALUES($1,$2)", corepg.SchemaVersion, checksum); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE edo_deliveries RENAME TO unavailable_edo_deliveries"); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Ready(ctx, pool); err == nil {
+		t.Fatal("missing delivery table allowed readiness")
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE unavailable_edo_deliveries RENAME TO edo_deliveries"); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Ready(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+}

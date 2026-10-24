@@ -122,6 +122,31 @@ func (r *Repository) Sign(ctx context.Context, cmd service.SignCommand) (out ser
 		if d.Document == nil || d.Document.ID != cmd.DocumentID || d.Document.DealID != d.ID || d.Document.DealVersion != d.DealVersion || d.Document.DocumentVersion != cmd.Input.DocumentVersion || d.Document.SHA256 != cmd.Input.DocumentSHA256 {
 			return reject(409, "DOCUMENT_MISMATCH", "Документ изменился. Проверьте актуальную версию PDF")
 		}
+		respond := func(signature service.Signature) error {
+			out.Status = 201
+			var e error
+			out.Body, e = json.Marshal(map[string]any{"signature": signature, "deal": d})
+			if e != nil {
+				return e
+			}
+			return persistResult()
+		}
+		for _, signature := range d.Signatures {
+			if signature.OrganisationID == cmd.Actor.OrganizationID {
+				// An existing fact is readable after settlement, cancellation or a
+				// block. This does not sign again or require an active reserve.
+				return respond(signature)
+			}
+		}
+		stickyReview := false
+		for _, reason := range d.ReviewReasons {
+			if reason == "CANCELLATION_REJECTED" {
+				stickyReview = true
+			}
+		}
+		if d.Dispute != nil || d.CancellationRequest != nil || stickyReview {
+			return reject(409, "INVALID_STATE", "Новая подпись заблокирована спором, отменой или проверкой")
+		}
 		var rawStatus string
 		var validReserve bool
 		if e = tx.QueryRow(ctx, `SELECT d.status,EXISTS(SELECT 1 FROM reserves r JOIN accounts a ON a.id=r.account_id WHERE r.deal_id=d.id AND r.deal_version=d.deal_version AND r.status='ACTIVE' AND r.customer_party_id=$2 AND r.supplier_party_id=$3 AND a.organization_id=$2 AND r.document_id=$4 AND r.document_version=$5 AND r.document_sha256=$6 AND r.amount_kopecks=$7::bigint AND r.currency=$8) FROM deals d WHERE d.id=$1`, d.ID, d.CustomerPartyID, d.SupplierPartyID, d.Document.ID, d.Document.DocumentVersion, d.Document.SHA256, d.AmountKopecks, d.Currency).Scan(&rawStatus, &validReserve); e != nil {
@@ -141,22 +166,6 @@ func (r *Repository) Sign(ctx context.Context, cmd service.SignCommand) (out ser
 		}
 		if !consents[d.CustomerPartyID] || !consents[d.SupplierPartyID] {
 			return reject(422, "CONSENTS_MISSING", "Нужны два согласия текущих условий и PDF")
-		}
-		respond := func(signature service.Signature) error {
-			out.Status = 201
-			var e error
-			out.Body, e = json.Marshal(map[string]any{"signature": signature, "deal": d})
-			if e != nil {
-				return e
-			}
-			return persistResult()
-		}
-		for _, signature := range d.Signatures {
-			if signature.OrganisationID == cmd.Actor.OrganizationID {
-				// Returning an existing fact neither re-signs nor requires new PDF
-				// access. It remains possible after the deadline, without new jobs.
-				return respond(signature)
-			}
 		}
 		var storage string
 		if e = tx.QueryRow(ctx, `SELECT storage_key FROM document_versions WHERE document_id=$1 AND document_version=$2`, d.Document.ID, d.Document.DocumentVersion).Scan(&storage); e != nil {
