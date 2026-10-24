@@ -29,6 +29,23 @@ async function downloadText(page: Page, format: 'CSV' | 'JSON') {
   for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
   return { text: Buffer.concat(chunks).toString('utf8'), filename: download.suggestedFilename() };
 }
+// A same-origin external stylesheet keeps the layout fixture subject to the
+// deployed style-src policy; inline styles and CSP bypass are unnecessary.
+async function reserveScrollbarGutter(page: Page) {
+  const url = new URL('/__e2e__/scrollbar-gutter.css', page.url()).href;
+  await page.route(url, route => route.fulfill({
+    status: 200, contentType: 'text/css',
+    headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
+    body: 'html { scrollbar-gutter: stable; overflow-y: scroll; }',
+  }));
+  try { await page.addStyleTag({ url }); }
+  finally { await page.unroute(url); }
+  expect(await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return { gutter: style.scrollbarGutter, overflow: style.overflowY };
+  })).toEqual({ gutter: 'stable', overflow: 'scroll' });
+}
+
 // Reserve a classic scrollbar gutter even in headless Chromium, where the
 // normal viewport can otherwise hide overflow that native browser users see.
 async function visibleLayoutWidth(page: Page) {
@@ -162,7 +179,7 @@ test('operator audit has protected deal filters and participant navigation has n
     await history.getByText('Подробности события', { exact: true }).click(); await expect(history).toContainText(setup.deal.id);
     await expect(history.getByRole('button', { name: 'Подготовить CSV', exact: true })).toHaveCount(0);
     await expect(history).not.toContainText(actors.customer.user.email);
-    await view.addStyleTag({ content: 'html { scrollbar-gutter: stable; overflow-y: scroll; }' });
+    await reserveScrollbarGutter(view);
     const navigation = view.getByRole('navigation', { name: 'Разделы кабинета', exact: true });
     for (const width of [320, 375, 1440]) {
       await view.setViewportSize({ width, height: 1000 });
@@ -206,7 +223,7 @@ test('history long reasons, IDs and filter actions fit 320–1440px without over
   try {
     await openDeal(page, setup.deal.id); const history = page.getByRole('region', { name: 'История сделки', exact: true });
     for (const details of await history.locator('.audit-event-details').all()) await details.getByText('Подробности события', { exact: true }).click();
-    await page.addStyleTag({ content: 'html { scrollbar-gutter: stable; overflow-y: scroll; }' });
+    await reserveScrollbarGutter(page);
     for (const width of [320, 375, 768, 1440]) {
       await page.setViewportSize({ width, height: 1000 }); const visibleWidth = await visibleLayoutWidth(page);
       const boxes = await history.locator('input,select,.audit-actions>.button').evaluateAll(elements => elements.map(element => { const rect = element.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }; }));
