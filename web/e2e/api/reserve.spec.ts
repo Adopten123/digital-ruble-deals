@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { APIRequestContext, APIResponse, PlaywrightWorkerArgs } from '@playwright/test';
 import { test, expect, apiFor, csrf, draftInput, postDraft, E2E_BASE_URL, API_BASE_URL } from '../support.ts';
 
@@ -25,10 +26,21 @@ async function laboratory(playwright: PlaywrightWorkerArgs['playwright']) {
   const outsider = await apiFor(playwright, 'outsider');
   const clients = [customer, operator, supplier, outsider];
   try {
-    const identity = await ok(await customer.post('/api/v1/auth/register', {
-      headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(customer) },
-      data: { email: `reserve-${randomUUID()}@demo.poaktu.local`, password: 'ReserveSyntheticOnly2026!', organisation: { name: `Резерв учебный ${randomUUID()}`, kind: 'COMPANY' } },
-    }), 201);
+    const registration = { email: `reserve-${randomUUID()}@demo.poaktu.local`, password: 'ReserveSyntheticOnly2026!', organisation: { name: `Резерв учебный ${randomUUID()}`, kind: 'COMPANY' } };
+    let registered = await customer.post('/api/v1/auth/register', {
+      headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(customer) }, data: registration,
+    });
+    if (registered.status() === 429) {
+      expect((await registered.json()).error.code).toBe('RATE_LIMITED');
+      const seconds = Number(registered.headers()['retry-after']);
+      expect(Number.isInteger(seconds) && seconds >= 1 && seconds <= 60).toBe(true);
+      test.setTimeout(test.info().timeout + seconds * 1000);
+      await test.step('respect registration budget before one explicit laboratory retry', () => delay(seconds * 1000));
+      registered = await customer.post('/api/v1/auth/register', {
+        headers: { Origin: E2E_BASE_URL, 'X-CSRF-Token': await csrf(customer) }, data: registration,
+      });
+    }
+    const identity = await ok(registered, 201);
     const initial = await account(customer);
     exactBalances(initial, 0n, 0n);
     const path = `/api/v1/demo/accounts/${initial.id}`;

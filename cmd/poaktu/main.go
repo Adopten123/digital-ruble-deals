@@ -31,6 +31,9 @@ import (
 	edorepo "github.com/Adopten123/digital-ruble-deals/internal/features/edo/repository/postgres"
 	edoservice "github.com/Adopten123/digital-ruble-deals/internal/features/edo/service"
 	edohttp "github.com/Adopten123/digital-ruble-deals/internal/features/edo/transport/http"
+	notificationsrepo "github.com/Adopten123/digital-ruble-deals/internal/features/notifications/repository/postgres"
+	notificationsservice "github.com/Adopten123/digital-ruble-deals/internal/features/notifications/service"
+	notificationshttp "github.com/Adopten123/digital-ruble-deals/internal/features/notifications/transport/http"
 	orgrepo "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/repository/postgres"
 	orgservice "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/service"
 	orghttp "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/transport/http"
@@ -144,6 +147,8 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 		return errors.New("cannot initialize internal EDO transport")
 	}
 	worker := edoservice.NewWorker(edoService, sender)
+	notificationsService := notificationsservice.New(notificationsrepo.New(pool), key)
+	notificationsWorker := notificationsservice.NewWorker(notificationsService, logger)
 	mux := http.NewServeMux()
 	authHandler.RegisterRoutes(mux)
 	orghttp.New(organizationService).RegisterRoutes(mux, authHandler.Require)
@@ -151,6 +156,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 	settlementhttp.New(settlementservice.New(settlementrepo.New(pool), key), csrf).RegisterRoutes(mux, authHandler.Require)
 	edohttp.New(edoService, csrf).RegisterRoutes(mux, authHandler.Require)
 	audithttp.New(auditservice.New(auditrepo.New(pool), key)).RegisterRoutes(mux, authHandler.Require)
+	notificationshttp.New(notificationsService, csrf).RegisterRoutes(mux, authHandler.Require)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.JSON(w, 200, map[string]string{"status": "ok", "contour": "test"})
 	})
@@ -161,7 +167,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "edo_settlement"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "notifications"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")
@@ -169,9 +175,18 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.Middleware(logger, mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	var workerWG sync.WaitGroup
-	workerErrors := make(chan error, 1)
-	workerWG.Add(1)
-	go func() { defer workerWG.Done(); workerErrors <- worker.Run(workerCtx) }()
+	type workerExit struct {
+		name string
+		err  error
+	}
+	// Each worker can report while shutdown waits for both goroutines.
+	workerErrors := make(chan workerExit, 2)
+	workerWG.Add(2)
+	go func() { defer workerWG.Done(); workerErrors <- workerExit{"EDO", worker.Run(workerCtx)} }()
+	go func() {
+		defer workerWG.Done()
+		workerErrors <- workerExit{"notifications", notificationsWorker.Run(workerCtx)}
+	}()
 	defer func() { stopWorker(); workerWG.Wait() }()
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -184,19 +199,19 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			return nil
 		}
 		return err
-	case workerErr := <-workerErrors:
+	case stopped := <-workerErrors:
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			return err
 		}
-		if workerErr != nil {
-			return fmt.Errorf("EDO worker stopped: %w", workerErr)
+		if stopped.err != nil {
+			return fmt.Errorf("%s worker stopped: %w", stopped.name, stopped.err)
 		}
 		if ctx.Err() != nil {
 			return nil
 		}
-		return errors.New("EDO worker stopped unexpectedly")
+		return fmt.Errorf("%s worker stopped unexpectedly", stopped.name)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

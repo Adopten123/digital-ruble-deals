@@ -18,7 +18,7 @@ test('health and readiness identify the test contour and implemented stage', asy
       const response = await client.get(path);
       expect(response.status()).toBe(200);
       expect(await response.json()).toMatchObject(path === '/readyz'
-        ? { status: 'ready', contour: 'test', stage: 'edo_settlement' }
+        ? { status: 'ready', contour: 'test', stage: 'notifications' }
         : { status: 'ok', contour: 'test' });
     }
   } finally {
@@ -45,7 +45,10 @@ test('HTTP responses use fresh request IDs, JSON errors and protective headers',
       if (response.status() === 404) {
         const body = await apiError(response, 404, 'RESOURCE_NOT_FOUND');
         expect(body.request_id).toBe(headers['x-request-id']);
-        expect(JSON.stringify(body)).not.toMatch(/password|token_hash|SELECT |pgx|goroutine/i);
+        expect(Object.keys(body).sort()).toEqual(['error', 'request_id']);
+        expect(Object.keys(body.error).sort()).toEqual(['code', 'message']);
+        // An opaque random request ID can legitimately contain the letters pgx.
+        expect(JSON.stringify(body.error)).not.toMatch(/password|token_hash|SELECT |pgx|goroutine/i);
       }
     }
     expect(ids.size).toBe(2);

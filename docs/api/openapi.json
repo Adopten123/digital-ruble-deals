@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ПоАкту — реализованный HTTP API",
-    "version": "0.6.0",
-    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Реализованы 34 браузерные операции и один внутренний обработчик ЭДО. После полного резерва две точные подписи сохраняют READY_TO_SETTLE; отдельная доставка с HMAC / durable inbox выполняет одну выплату. Спор и активная отмена блокируют выплату; два голоса разных организаций освобождают резерв. Отказ отмены и срок сохраняют REVIEW_REQUIRED без автоматического расчёта / освобождения. Деньги — целые копейки строками; JSON до 16 KiB, PDF до 5 MiB, внутреннее событие до 64 KiB. Все доменные команды используют исходные тело и Idempotency-Key при неизвестном исходе. Cookie pa_session / pa_csrf и X-CSRF-Token; Origin=APP_ORIGIN, X-Expected-User-ID проверяет ожидаемый аккаунт. Внутренний маршрут недоступен через web-proxy; HMAC-секрет не выдаётся браузеру. История и CSV/JSON используют серверный scope и безопасную проекцию сохранённых фактов. Уведомления и A19 — следующие этапы."
+    "version": "0.7.0",
+    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Реализованы 36 браузерных операции и один внутренний обработчик ЭДО. После полного резерва две точные подписи сохраняют READY_TO_SETTLE; отдельная доставка с HMAC / durable inbox выполняет одну выплату. Спор и активная отмена блокируют выплату; два голоса разных организаций освобождают резерв. Отказ отмены и срок сохраняют REVIEW_REQUIRED без автоматического расчёта / освобождения. Деньги — целые копейки строками; JSON до 16 KiB, PDF до 5 MiB, внутреннее событие до 64 KiB. Все доменные команды используют исходные тело и Idempotency-Key при неизвестном исходе. Cookie pa_session / pa_csrf и X-CSRF-Token; Origin=APP_ORIGIN, X-Expected-User-ID проверяет ожидаемый аккаунт. Внутренний маршрут недоступен через web-proxy; HMAC-секрет не выдаётся браузеру. История и CSV/JSON используют серверный scope и безопасную проекцию сохранённых фактов. Пользовательские уведомления доставляются из outbox после commit без дублей; прочитанность сохраняется. Независимый A19 — следующий этап."
   },
   "servers": [
     {
@@ -43,6 +43,10 @@
     {
       "name": "История",
       "description": "Сохранённые факты, отказы и результаты, с теми же правами при чтении и экспорте."
+    },
+    {
+      "name": "Уведомления",
+      "description": "Внутри приложения, из сохранённых событий; внешняя почта / мессенджеры не используются."
     }
   ],
   "security": [],
@@ -9678,6 +9682,459 @@
           }
         ]
       }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "operationId": "listNotifications",
+        "tags": [
+          "Уведомления"
+        ],
+        "summary": "Прочитать свои уведомления",
+        "description": "Уведомления текущего пользователя и его действующей организации. При чтении и подсчёте проверяются текущее членство, текущая сторона сделки и участие в исторической версии события; новый исполнитель не получает старый раунд, прежний теряет доступ. Собственные учебные зачисления / списания доступны по организации счёта. Оператор получает пустую страницу с unread_count=0. unread отсутствует — все, true — непрочитанные, false — прочитанные. Неизвестные, повторные и пустые параметры запрещены. Порядок времени доставки created_at DESC, id DESC; event.created_at — время исходного факта. Курсор подписан и связан с пользователем, организацией, фильтром, limit и верхней парой. Между HTTP-запросами нет общего MVCC-снимка: прочитанность / права могут измениться и сократить страницы. unread_count считает все доступные непрочитанные, независимо от фильтра страницы. Доставка асинхронная, polling допустим. Ни чтение, ни отметка не меняют деньги или состояние сделки.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "in": "query",
+            "name": "unread",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Только канонические true или false. Отсутствие параметра возвращает все."
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Непрозрачный подписанный курсор; смена фильтра требует первой страницы."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Страница безопасных уведомлений и общий счётчик доступных непрочитанных.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректные поля, JSON или параметры.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректные поля, JSON или параметры."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сессия отсутствует или истекла.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Сессия отсутствует или истекла."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Сессия отсутствует или истекла."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Аккаунт изменился.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Аккаунт изменился."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденная ошибка сервера."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Уведомления временно недоступны. Повторить чтение или идемпотентную отметку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Уведомления временно недоступны. Повторить чтение или идемпотентную отметку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет прав или проверка Origin / CSRF не пройдена.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Нет прав или проверка Origin / CSRF не пройдена."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/notifications/{id}/read": {
+      "post": {
+        "operationId": "markNotificationRead",
+        "tags": [
+          "Уведомления"
+        ],
+        "summary": "Отметить своё уведомление прочитанным",
+        "description": "Строго пустое тело: даже {} запрещён. Нужны Origin / CSRF и текущая сессия. Idempotency-Key не нужен: первый read_at сохраняется навсегда, повтор доступного ресурса возвращает 204 с прежней датой. Проверяются текущий получатель, его членство и текущие / исторические права события; чужое, неизвестное или утратившее доступ уведомление — 404. При потерянном ответе перечитать список или повторить отметку. Деньги и состояние сделки не меняются.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID доступного собственного уведомления."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Прочитанность сохранена. Тело отсутствует.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректные поля, JSON или параметры.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Некорректные поля, JSON или параметры."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сессия отсутствует или истекла.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Сессия отсутствует или истекла."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Сессия отсутствует или истекла."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет прав или проверка Origin / CSRF не пройдена.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Нет прав или проверка Origin / CSRF не пройдена."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Аккаунт изменился.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Аккаунт изменился."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Непредвиденная ошибка сервера.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INTERNAL_ERROR": {
+                    "value": {
+                      "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "Непредвиденная ошибка сервера."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Уведомления временно недоступны. Повторить чтение или идемпотентную отметку.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Уведомления временно недоступны. Повторить чтение или идемпотентную отметку."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ресурс отсутствует либо закрыт для текущей организации.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Ресурс отсутствует либо закрыт для текущей организации."
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -9789,7 +10246,7 @@
           "stage": {
             "type": "string",
             "enum": [
-              "edo_settlement"
+              "notifications"
             ]
           }
         }
@@ -12150,6 +12607,62 @@
             "items": {
               "$ref": "#/components/schemas/AuditEvent"
             }
+          }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "created_at",
+          "read_at",
+          "event"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Время фактической доставки, отдельно от event.created_at."
+          },
+          "read_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Неизменяемое время первой отметки прочтения."
+          },
+          "event": {
+            "$ref": "#/components/schemas/AuditEvent"
+          }
+        }
+      },
+      "NotificationPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "next_cursor",
+          "unread_count"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          },
+          "next_cursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "unread_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Все доступные непрочитанные, независимо от unread-фильтра."
           }
         }
       }
