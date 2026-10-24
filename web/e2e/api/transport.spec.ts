@@ -18,7 +18,7 @@ test('health and readiness identify the test contour and implemented stage', asy
       const response = await client.get(path);
       expect(response.status()).toBe(200);
       expect(await response.json()).toMatchObject(path === '/readyz'
-        ? { status: 'ready', contour: 'test', stage: 'test_signatures' }
+        ? { status: 'ready', contour: 'test', stage: 'edo_settlement' }
         : { status: 'ok', contour: 'test' });
     }
   } finally {
@@ -151,8 +151,13 @@ test('public deployment does not expose internal handlers or bypass HTTP methods
   const client = await apiFor(playwright, 'customer');
   try {
     for (const path of ['/internal/edo/events', '/api/v1/internal/edo/events']) {
-      const response = await client.post(path, { data: {} });
+      const response = await client.post(E2E_BASE_URL + path, { data: {} });
       expect(response.status()).toBe(404);
+    }
+    if (API_BASE_URL !== E2E_BASE_URL) {
+      // Direct API development access still requires source HMAC, even when
+      // the caller has a browser session. The public proxy must hide the route.
+      await apiError(await client.post('/internal/edo/events', { data: {} }), 403, 'EDO_SOURCE_INVALID');
     }
     const input = draftInput();
     // The deployed server's catch-all responds with 404 for unsupported methods.

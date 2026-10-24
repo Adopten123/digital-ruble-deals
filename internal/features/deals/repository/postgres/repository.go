@@ -131,14 +131,21 @@ func (r *Repository) Create(ctx context.Context, cmd service.Command) (out servi
 	return out, nil
 }
 
-const columns = `d.id,d.deal_version,
- CASE WHEN d.status IN ('SETTLED','CANCELLED','REFUNDED') THEN d.status WHEN v.deadline_at <= statement_timestamp() THEN 'REVIEW_REQUIRED' ELSE d.status END,
+const statusExpression = `CASE WHEN d.status IN ('SETTLED','CANCELLED','REFUNDED') THEN d.status
+ WHEN v.deadline_at<=statement_timestamp() OR EXISTS(SELECT 1 FROM cancellation_decisions cd JOIN cancellation_requests cr ON cr.id=cd.request_id WHERE cr.deal_id=d.id AND cd.decision='REJECTED') THEN 'REVIEW_REQUIRED'
+ WHEN EXISTS(SELECT 1 FROM cancellation_requests cr WHERE cr.deal_id=d.id AND NOT EXISTS(SELECT 1 FROM cancellation_decisions cd WHERE cd.request_id=cr.id)) THEN 'CANCELLATION_PENDING'
+ WHEN EXISTS(SELECT 1 FROM deal_disputes dp WHERE dp.deal_id=d.id) THEN 'DISPUTED' ELSE d.status END`
+const columns = `d.id,d.deal_version,` + statusExpression + `,
  v.customer_party_id,v.supplier_party_id,v.title,v.description,v.amount_kopecks::text,v.currency,v.deadline_at,
  c.id,c.name,c.kind,s.id,s.name,s.kind,d.created_at,d.updated_at,
  (SELECT jsonb_build_object('id',dv.document_id,'deal_id',dv.deal_id,'deal_version',dv.deal_version,'document_version',dv.document_version,'sha256',dv.sha256,'file_name',dv.file_name,'size_bytes',dv.size_bytes,'content_type',dv.content_type,'created_at',to_char(dv.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM document_versions dv WHERE dv.document_id=d.current_document_id AND dv.document_version=d.current_document_version),
  COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'organisation_id',a.organization_id,'user_id',a.user_id,'deal_version',a.deal_version,'document_id',a.document_id,'document_version',a.document_version,'document_sha256',a.document_sha256,'created_at',to_char(a.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) ORDER BY a.created_at,a.id) FROM deal_agreements a WHERE a.deal_id=d.id AND a.deal_version=d.deal_version AND a.document_id=d.current_document_id AND a.document_version=d.current_document_version),'[]'::jsonb),
  (SELECT jsonb_build_object('id',r.id,'deal_id',r.deal_id,'deal_version',r.deal_version,'account_id',r.account_id,'amount_kopecks',r.amount_kopecks::text,'currency',r.currency,'status',r.status,'created_at',to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM reserves r WHERE r.deal_id=d.id),
- COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'organisation_id',a.organization_id,'user_id',a.user_id,'deal_version',a.deal_version,'document_id',a.document_id,'document_version',a.document_version,'document_sha256',a.document_sha256,'created_at',to_char(a.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) ORDER BY a.created_at,a.id) FROM document_signatures a WHERE a.deal_id=d.id AND a.deal_version=d.deal_version AND a.document_id=d.current_document_id AND a.document_version=d.current_document_version AND a.document_sha256=(SELECT sha256 FROM document_versions dv WHERE dv.document_id=d.current_document_id AND dv.document_version=d.current_document_version)),'[]'::jsonb)`
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'organisation_id',a.organization_id,'user_id',a.user_id,'deal_version',a.deal_version,'document_id',a.document_id,'document_version',a.document_version,'document_sha256',a.document_sha256,'created_at',to_char(a.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) ORDER BY a.created_at,a.id) FROM document_signatures a WHERE a.deal_id=d.id AND a.deal_version=d.deal_version AND a.document_id=d.current_document_id AND a.document_version=d.current_document_version AND a.document_sha256=(SELECT sha256 FROM document_versions dv WHERE dv.document_id=d.current_document_id AND dv.document_version=d.current_document_version)),'[]'::jsonb),
+ (SELECT jsonb_build_object('id',dp.id,'deal_id',dp.deal_id,'deal_version',dp.deal_version,'organisation_id',dp.organization_id,'user_id',dp.user_id,'reason',dp.reason,'created_at',to_char(dp.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM deal_disputes dp WHERE dp.deal_id=d.id),
+ (SELECT jsonb_build_object('id',cr.id,'deal_id',cr.deal_id,'deal_version',cr.deal_version,'initiator_organisation_id',cr.initiator_organization_id,'initiator_user_id',cr.initiator_user_id,'reason',cr.reason,'status','PENDING','decision',null,'created_at',to_char(cr.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) FROM cancellation_requests cr WHERE cr.deal_id=d.id AND NOT EXISTS(SELECT 1 FROM cancellation_decisions cd WHERE cd.request_id=cr.id) ORDER BY cr.created_at DESC,cr.id DESC LIMIT 1),
+ to_jsonb(array_remove(ARRAY[CASE WHEN v.deadline_at<=statement_timestamp() AND d.status NOT IN ('SETTLED','CANCELLED','REFUNDED') THEN 'DEADLINE_PASSED' END,CASE WHEN EXISTS(SELECT 1 FROM cancellation_decisions cd JOIN cancellation_requests cr ON cr.id=cd.request_id WHERE cr.deal_id=d.id AND cd.decision='REJECTED') THEN 'CANCELLATION_REJECTED' END],NULL)),
+ (SELECT s.id FROM settlements s WHERE s.deal_id=d.id)`
 const joins = ` FROM deals d JOIN deal_versions v ON v.deal_id=d.id AND v.deal_version=d.deal_version
  JOIN organizations c ON c.id=v.customer_party_id JOIN organizations s ON s.id=v.supplier_party_id `
 const scope = ` EXISTS(SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.user_id=$1 AND m.organization_id=$2 AND m.role='ORG_OWNER' AND u.system_role='USER') AND ($2=v.customer_party_id OR $2=v.supplier_party_id) `
@@ -146,8 +153,8 @@ const scope = ` EXISTS(SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_i
 type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (d service.Deal, err error) {
-	var document, agreements, reserve, signatures []byte
-	err = row.Scan(&d.ID, &d.DealVersion, &d.Status, &d.CustomerPartyID, &d.SupplierPartyID, &d.Title, &d.Description, &d.AmountKopecks, &d.Currency, &d.DeadlineAt, &d.Customer.ID, &d.Customer.Name, &d.Customer.Kind, &d.Supplier.ID, &d.Supplier.Name, &d.Supplier.Kind, &d.CreatedAt, &d.UpdatedAt, &document, &agreements, &reserve, &signatures)
+	var document, agreements, reserve, signatures, dispute, cancellation, review []byte
+	err = row.Scan(&d.ID, &d.DealVersion, &d.Status, &d.CustomerPartyID, &d.SupplierPartyID, &d.Title, &d.Description, &d.AmountKopecks, &d.Currency, &d.DeadlineAt, &d.Customer.ID, &d.Customer.Name, &d.Customer.Kind, &d.Supplier.ID, &d.Supplier.Name, &d.Supplier.Kind, &d.CreatedAt, &d.UpdatedAt, &document, &agreements, &reserve, &signatures, &dispute, &cancellation, &review, &d.PaymentID)
 	if err == nil && len(document) > 0 {
 		err = json.Unmarshal(document, &d.Document)
 	}
@@ -159,6 +166,15 @@ func scan(row scanner) (d service.Deal, err error) {
 	}
 	if err == nil && len(signatures) > 0 {
 		err = json.Unmarshal(signatures, &d.Signatures)
+	}
+	if err == nil && len(dispute) > 0 {
+		err = json.Unmarshal(dispute, &d.Dispute)
+	}
+	if err == nil && len(cancellation) > 0 {
+		err = json.Unmarshal(cancellation, &d.CancellationRequest)
+	}
+	if err == nil && len(review) > 0 {
+		err = json.Unmarshal(review, &d.ReviewReasons)
 	}
 	d.Normalize()
 	return d, err
@@ -182,7 +198,7 @@ func (r *Repository) List(ctx context.Context, q service.Query) ([]service.Deal,
  AND ($3='' OR strpos(lower(d.id),lower($3))>0 OR strpos(lower(v.title),lower($3))>0
    OR strpos(lower(CASE WHEN v.customer_party_id=$2 THEN s.id ELSE c.id END),lower($3))>0
    OR strpos(lower(CASE WHEN v.customer_party_id=$2 THEN s.name ELSE c.name END),lower($3))>0)
- AND ($4='' OR (CASE WHEN d.status IN ('SETTLED','CANCELLED','REFUNDED') THEN d.status WHEN v.deadline_at<=statement_timestamp() THEN 'REVIEW_REQUIRED' ELSE d.status END)=$4)
+ AND ($4='' OR (`+statusExpression+`)=$4)
  AND ($5='' OR ($5='customer' AND v.customer_party_id=$2) OR ($5='supplier' AND v.supplier_party_id=$2))
  AND ($6::timestamptz IS NULL OR d.created_at >= $6) AND ($7::timestamptz IS NULL OR d.created_at <= $7)
  AND ($8::timestamptz IS NULL OR (d.created_at,d.id)<($8::timestamptz,$9::text))

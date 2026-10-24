@@ -113,6 +113,10 @@ func Ready(ctx context.Context, pool *pgxpool.Pool) error {
  AND to_regclass('audit_events') IS NOT NULL AND to_regclass('outbox') IS NOT NULL
  AND to_regclass('documents') IS NOT NULL AND to_regclass('document_versions') IS NOT NULL AND to_regclass('deal_agreements') IS NOT NULL
  AND to_regclass('reserves') IS NOT NULL AND to_regclass('operator_command_results') IS NOT NULL
+ AND to_regclass('document_signatures') IS NOT NULL AND to_regclass('edo_outbox') IS NOT NULL
+ AND to_regclass('deal_disputes') IS NOT NULL AND to_regclass('cancellation_requests') IS NOT NULL AND to_regclass('cancellation_decisions') IS NOT NULL
+ AND to_regclass('event_inbox') IS NOT NULL AND to_regclass('settlements') IS NOT NULL AND to_regclass('edo_deliveries') IS NOT NULL
+ AND to_regclass('edo_command_results') IS NOT NULL
  AND EXISTS(SELECT 1 FROM accounts WHERE system_purpose='DEMO_DEBITS')`, corepg.SchemaVersion, Name).Scan(&ready)
 	if err != nil {
 		return err

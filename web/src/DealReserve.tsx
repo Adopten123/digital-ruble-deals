@@ -25,17 +25,17 @@ export default function DealReserve({ deal, ownId, locked, revision, onReserve, 
     } catch (failure) { if (sequence === request.current) { setError(failure); onUnauthorized(failure); } }
     finally { if (sequence === request.current) setLoading(false); }
   }, [ownId, deal.amount_kopecks, onUnauthorized]);
-  useEffect(() => { if (relevant) void load(); return () => { request.current += 1; }; }, [relevant, deal.reserve?.id, revision, load]);
+  useEffect(() => { if (relevant) void load(); return () => { request.current += 1; }; }, [relevant, deal.reserve?.id, deal.reserve?.status, revision, load]);
   const snapshot = account ? reserveBalanceSnapshot(account, deal.amount_kopecks) : null;
   let eligible = false;
   try { reserveDealInput(deal); eligible = customer && new Date(deal.deadline_at).getTime() > Date.now(); } catch { /* Server remains authoritative; no button for an incomplete context. */ }
   const reserve = deal.reserve;
   const validReserve = reserve && reserve.deal_id === deal.id && reserve.deal_version === deal.deal_version
-    && reserve.amount_kopecks === deal.amount_kopecks && reserve.currency === 'RUB' && reserve.status === 'ACTIVE';
+    && reserve.amount_kopecks === deal.amount_kopecks && reserve.currency === 'RUB';
   return <section className="deal-reserve" aria-label="Резерв сделки"><h4>Резерв тестовых средств</h4>
-    <p className="field-help">Тестовый контур. Резерв закрепляет полную сумму за этой сделкой и уменьшает доступный остаток. Исполнитель пока не получает оплату.</p>
+    <p className="field-help">Тестовый контур. Активный резерв закрепляет полную сумму за сделкой. Выплата погашает его, согласованная отмена освобождает.</p>
     <div className="reserve-total"><span>Полная сумма сделки</span><strong>{formatRubles(deal.amount_kopecks)}</strong></div>
-    {reserve && (validReserve ? <div className="notice notice-success" role="status"><strong>Сумма зарезервирована</strong><span>{formatRubles(reserve.amount_kopecks)} закреплены за версией условий {reserve.deal_version}. Средства не выплачены исполнителю.</span><code>{reserve.id}</code></div>
+    {reserve && (validReserve ? <div className="notice notice-success" role="status"><strong>{reserve.status === 'ACTIVE' ? 'Сумма зарезервирована' : reserve.status === 'CONSUMED' ? 'Резерв использован для выплаты' : 'Резерв больше не удерживается'}</strong><span>{formatRubles(reserve.amount_kopecks)} · версия условий {reserve.deal_version}. {reserve.status === 'ACTIVE' ? 'Средства не выплачены исполнителю.' : reserve.status === 'CONSUMED' ? 'Тестовая выплата исполнителю подтверждена.' : 'Сумма снова доступна заказчику, выплаты исполнителю не было.'}</span><code>{reserve.id}</code></div>
       : <div className="notice notice-error" role="alert">Резерв в ответе не соответствует условиям сделки. Обновите карточку.</div>)}
     {relevant && <><div className="reserve-balance-heading"><h5>Счёт заказчика · данные сервера</h5><button className="text-button" type="button" disabled={loading} onClick={() => void load()}>Обновить остатки</button></div>
       {loading && <p role="status" className="field-help">Получаем актуальные остатки…</p>}
@@ -44,7 +44,6 @@ export default function DealReserve({ deal, ownId, locked, revision, onReserve, 
       {eligible && snapshot && <p className="field-help">{snapshot.canCover ? `После резерва по этому снимку останется доступно ${formatRubles(snapshot.availableAfterKopecks!)}.` : 'По текущему снимку доступной суммы недостаточно. Остатки могли измениться; окончательный результат определяет сервер.'}</p>}
     </>}
     {eligible && <><button className="button button-primary reserve-submit" type="button" disabled={locked} onClick={onReserve}>Зарезервировать всю сумму</button><p className="field-help">Подтверждаются актуальные условия, PDF и два согласия. Сервер повторно проверит доступные средства в момент операции.</p></>}
-    {!reserve && !eligible && <p className="field-help">{deal.status === 'AGREED' && !customer ? 'Резерв создаёт заказчик. После подтверждения он станет виден обеим сторонам.' : 'Для резерва нужны актуальный PDF и согласие обеих сторон до срока сделки.'}</p>}
-    {reserve && <p className="field-help">После резерва стороны могут сохранить две тестовые подписи. Выплата по событию ЭДО будет доступна следующим этапом.</p>}
+    {!reserve && !eligible && deal.status !== 'CANCELLED' && <p className="field-help">{deal.status === 'AGREED' && !customer ? 'Резерв создаёт заказчик. После подтверждения он станет виден обеим сторонам.' : 'Для резерва нужны актуальный PDF и согласие обеих сторон до срока сделки.'}</p>}
   </section>;
 }

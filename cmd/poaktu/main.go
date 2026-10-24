@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,6 +25,9 @@ import (
 	dealrepo "github.com/Adopten123/digital-ruble-deals/internal/features/deals/repository/postgres"
 	dealservice "github.com/Adopten123/digital-ruble-deals/internal/features/deals/service"
 	dealhttp "github.com/Adopten123/digital-ruble-deals/internal/features/deals/transport/http"
+	edorepo "github.com/Adopten123/digital-ruble-deals/internal/features/edo/repository/postgres"
+	edoservice "github.com/Adopten123/digital-ruble-deals/internal/features/edo/service"
+	edohttp "github.com/Adopten123/digital-ruble-deals/internal/features/edo/transport/http"
 	orgrepo "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/repository/postgres"
 	orgservice "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/service"
 	orghttp "github.com/Adopten123/digital-ruble-deals/internal/features/organizations/transport/http"
@@ -127,11 +131,22 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 		return errors.New("cannot initialize private document storage")
 	}
 	defer files.Close()
+	deliveryURL, err := internalEDOURL(cfg.HTTPAddr)
+	if err != nil {
+		return err
+	}
+	edoService := edoservice.New(edorepo.New(pool), key)
+	sender, err := edohttp.NewSender(deliveryURL)
+	if err != nil {
+		return errors.New("cannot initialize internal EDO transport")
+	}
+	worker := edoservice.NewWorker(edoService, sender)
 	mux := http.NewServeMux()
 	authHandler.RegisterRoutes(mux)
 	orghttp.New(organizationService).RegisterRoutes(mux, authHandler.Require)
 	dealhttp.New(dealservice.New(dealrepo.New(pool), key, files), csrf).RegisterRoutes(mux, authHandler.Require)
 	settlementhttp.New(settlementservice.New(settlementrepo.New(pool), key), csrf).RegisterRoutes(mux, authHandler.Require)
+	edohttp.New(edoService, csrf).RegisterRoutes(mux, authHandler.Require)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.JSON(w, 200, map[string]string{"status": "ok", "contour": "test"})
 	})
@@ -142,12 +157,18 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "test_signatures"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "edo_settlement"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")
 	})
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.Middleware(logger, mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	var workerWG sync.WaitGroup
+	workerErrors := make(chan error, 1)
+	workerWG.Add(1)
+	go func() { defer workerWG.Done(); workerErrors <- worker.Run(workerCtx) }()
+	defer func() { stopWorker(); workerWG.Wait() }()
 	serverErrors := make(chan error, 1)
 	go func() {
 		logger.Info("test API listening", "address", cfg.HTTPAddr, "origin", cfg.AppOrigin)
@@ -159,6 +180,19 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			return nil
 		}
 		return err
+	case workerErr := <-workerErrors:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		if workerErr != nil {
+			return fmt.Errorf("EDO worker stopped: %w", workerErr)
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		return errors.New("EDO worker stopped unexpectedly")
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

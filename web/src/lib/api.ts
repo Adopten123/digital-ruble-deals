@@ -33,7 +33,7 @@ export interface DemoMoneyInput { amount_kopecks: string; reason: string }
 export interface DemoMoneyResult { transaction_id: string; account: DemoAccount }
 export interface DealReserve {
   id: string; deal_id: string; deal_version: number; account_id: string;
-  amount_kopecks: string; currency: 'RUB'; status: 'ACTIVE'; created_at: string;
+  amount_kopecks: string; currency: 'RUB'; status: 'ACTIVE' | 'CONSUMED' | 'RELEASED'; created_at: string;
 }
 export interface ReserveDealInput { deal_version: number }
 export interface ReserveResult { reserve: DealReserve; deal: Deal }
@@ -84,6 +84,18 @@ export interface DealSignature {
 
 export interface SignDocumentInput { deal_version: number; document_version: number; document_sha256: string }
 export interface SignDocumentResult { signature: DealSignature; deal: Deal }
+export type DealStatus = 'DRAFT' | 'AGREED' | 'FUNDED' | 'READY_TO_SETTLE' | 'SETTLED' | 'DISPUTED' | 'CANCELLATION_PENDING' | 'REVIEW_REQUIRED' | 'CANCELLED' | 'REFUNDED';
+export interface DealDispute { id: string; deal_id: string; deal_version: number; organisation_id: string; user_id: string; reason: string; created_at: string }
+export interface CancellationDecision { organisation_id: string; user_id: string; decision: 'ACCEPTED' | 'REJECTED'; reason: string | null; created_at: string }
+export interface CancellationRequest { id: string; deal_id: string; deal_version: number; initiator_organisation_id: string; initiator_user_id: string; reason: string; status: 'PENDING' | 'ACCEPTED' | 'REJECTED'; created_at: string; decision: CancellationDecision | null }
+export interface DealReasonInput { deal_version: number; reason: string }
+export interface DisputeResult { dispute: DealDispute; deal: Deal }
+export interface CancellationResult { cancellation_request: CancellationRequest; deal: Deal }
+export type EDOEventTemplate = 'valid' | 'single_signature' | 'wrong_amount' | 'wrong_parties' | 'wrong_document' | 'wrong_document_version' | 'wrong_document_hash' | 'wrong_deal_version' | 'invalid_hmac' | 'replay' | 'same_id_different_body';
+export interface EDOCommandInput { deal_id: string; template: EDOEventTemplate; replay_event_id?: string }
+export interface EDOQueued { job_id: string; event_id: string }
+export interface EDOResult { event_id: string; result: 'settled' | 'already_settled'; deal_id: string; payment_id: string }
+export interface EDODelivery extends EDOQueued { deal_id: string; template: EDOEventTemplate; status: 'PENDING' | 'DELIVERED'; attempts: number; http_status: number | null; result: EDOResult | { error: { code: string; message: string }; request_id: string } | null; error_code: string | null; created_at: string; completed_at: string | null }
 
 export interface UpdateDealInput extends Partial<CreateDealInput> { expected_version: number }
 export interface AgreeDealInput { deal_version: number; document_id: string; document_version: number; document_sha256: string }
@@ -94,7 +106,7 @@ export interface DocumentResult { deal: Deal; document: DealDocument }
 export interface Deal extends CreateDealInput {
   id: string;
   deal_version: number;
-  status: 'DRAFT' | 'AGREED' | 'FUNDED' | 'READY_TO_SETTLE' | 'REVIEW_REQUIRED';
+  status: DealStatus;
   customer_party_id: string;
   customer: DealParty;
   supplier: DealParty;
@@ -102,16 +114,17 @@ export interface Deal extends CreateDealInput {
   agreements: DealAgreement[];
   signatures: DealSignature[];
   reserve: DealReserve | null;
-  payment_id: null;
-  dispute: null;
-  cancellation_request: null;
+  payment_id: string | null;
+  dispute: DealDispute | null;
+  cancellation_request: CancellationRequest | null;
+  review_reasons: string[];
   created_at: string;
   updated_at: string;
 }
 
 export interface DealFilters {
   q?: string;
-  status?: '' | 'DRAFT' | 'AGREED' | 'FUNDED' | 'READY_TO_SETTLE' | 'REVIEW_REQUIRED';
+  status?: '' | DealStatus;
   role?: '' | 'customer' | 'supplier';
   created_from?: string;
   created_to?: string;
@@ -145,6 +158,12 @@ const errorMessages: Record<string, string> = {
   UNSUPPORTED_MEDIA_TYPE: 'Нужен PDF-документ. Выберите файл с расширением .pdf.',
   CONSENTS_MISSING: 'Для следующего действия нужны согласия обеих сторон на актуальный документ.',
   RESERVE_REQUIRED: 'Для подписи нужен действующий резерв полной суммы. Обновите карточку.',
+  CANCELLATION_SELF_APPROVAL: 'Решение об отмене должна принять другая организация.',
+  SETTLEMENT_BLOCKED: 'Расчёт заблокирован спором, отменой или необходимостью проверки.',
+  EVENT_BINDING_MISMATCH: 'Событие не соответствует сторонам, сумме или документу сделки.',
+  SIGNATURES_MISSING: 'В событии отсутствуют две действительные подписи сторон.',
+  EDO_SOURCE_INVALID: 'Источник события ЭДО не прошёл проверку.',
+  EVENT_ID_CONFLICT: 'Этот ID события уже использован с другим содержимым.',
   DOCUMENT_MISMATCH: 'Документ или его версия изменились. Обновите карточку перед следующим действием.',
   INSUFFICIENT_AVAILABLE_FUNDS: 'Недостаточно доступных тестовых средств. Обновите остатки; активные резервы нельзя расходовать.',
 };
@@ -311,6 +330,17 @@ export class ApiClient {
   signDocument(id: string, input: SignDocumentInput, key: string): Promise<SignDocumentResult> {
     return this.mutate(`/documents/${encodeURIComponent(id)}/sign`, input, key, true);
   }
+  openDispute(id: string, input: DealReasonInput, key: string): Promise<DisputeResult> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/disputes`, input, key, true);
+  }
+  requestCancellation(id: string, input: DealReasonInput, key: string): Promise<CancellationResult> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/cancellation-requests`, input, key, true);
+  }
+  decideCancellation(id: string, requestId: string, decision: 'accept' | 'reject', input: ReserveDealInput | DealReasonInput, key: string): Promise<CancellationResult> {
+    return this.mutate(`/deals/${encodeURIComponent(id)}/cancellation-requests/${encodeURIComponent(requestId)}/${decision}`, input, key, true);
+  }
+  queueEDO(input: EDOCommandInput, key: string): Promise<EDOQueued> { return this.mutate('/demo/edo/events', input, key, true); }
+  edoEvent(id: string): Promise<EDODelivery> { return this.request(`/demo/edo/events/${encodeURIComponent(id)}`, { headers: this.identityHeaders() }); }
   demoAccounts(query: string, cursor?: string): Promise<Page<DemoAccount>> {
     const params = new URLSearchParams({ q: query, limit: '20' });
     if (cursor) params.set('cursor', cursor);

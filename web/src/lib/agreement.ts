@@ -1,5 +1,5 @@
 import { ApiError } from './api.ts';
-import type { AgreeDealInput, Deal, DealSignature, GenerateDocumentInput, ReserveDealInput, ReworkDealInput, SignDocumentInput, UpdateDealInput } from './api.ts';
+import type { AgreeDealInput, Deal, DealReasonInput, DealSignature, GenerateDocumentInput, ReserveDealInput, ReworkDealInput, SignDocumentInput, UpdateDealInput } from './api.ts';
 import { createDealInput, localDateTime, readPendingDeal } from './deals.ts';
 
 export const MAX_PDF_BYTES = 5 * 1024 * 1024;
@@ -10,6 +10,9 @@ export type AgreementCommand =
   | { kind: 'rework'; input: ReworkDealInput }
   | { kind: 'reserve'; input: ReserveDealInput }
   | { kind: 'sign'; documentId: string; input: SignDocumentInput }
+  | { kind: 'dispute' | 'cancel-request'; input: DealReasonInput }
+  | { kind: 'cancel-accept'; requestId: string; input: ReserveDealInput }
+  | { kind: 'cancel-reject'; requestId: string; input: DealReasonInput }
   | { kind: 'upload'; input: { expected_deal_version: number; file_name: string; size_bytes: number; sha256: string } };
 export type PendingAgreement = AgreementCommand & { key: string; dealId: string };
 
@@ -26,7 +29,7 @@ export function readPendingAgreement(serialized: string | null, dealId: string):
   if (serialized === null) return null;
   try {
     const attempt: PendingAgreement = JSON.parse(serialized);
-    if (!attempt || !exactKeys(attempt, attempt.kind === 'sign' ? ['key', 'dealId', 'kind', 'documentId', 'input'] : ['key', 'dealId', 'kind', 'input']) || attempt.dealId !== dealId
+    if (!attempt || !exactKeys(attempt, attempt.kind === 'sign' ? ['key', 'dealId', 'kind', 'documentId', 'input'] : attempt.kind === 'cancel-accept' || attempt.kind === 'cancel-reject' ? ['key', 'dealId', 'kind', 'requestId', 'input'] : ['key', 'dealId', 'kind', 'input']) || attempt.dealId !== dealId
       || typeof attempt.key !== 'string' || !/^[\x21-\x7e]{16,128}$/.test(attempt.key)
       || !attempt.input || typeof attempt.input !== 'object' || Array.isArray(attempt.input)) throw new Error();
     const input = attempt.input;
@@ -47,7 +50,15 @@ export function readPendingAgreement(serialized: string | null, dealId: string):
           || !nonempty(attempt.input.document_id, 128) || !/^[a-f0-9]{64}$/.test(attempt.input.document_sha256)) throw new Error();
         break;
       case 'rework':
+      case 'dispute':
+      case 'cancel-request':
         if (!exactKeys(input, ['deal_version', 'reason']) || !version(attempt.input.deal_version) || !nonempty(attempt.input.reason, 2000)) throw new Error();
+        break;
+      case 'cancel-reject':
+        if (!nonempty(attempt.requestId, 128) || !exactKeys(input, ['deal_version', 'reason']) || !version(attempt.input.deal_version) || !nonempty(attempt.input.reason, 2000)) throw new Error();
+        break;
+      case 'cancel-accept':
+        if (!nonempty(attempt.requestId, 128) || !exactKeys(input, ['deal_version']) || !version(attempt.input.deal_version)) throw new Error();
         break;
       case 'reserve':
         if (!exactKeys(input, ['deal_version']) || !version(attempt.input.deal_version)) throw new Error();
@@ -159,6 +170,6 @@ export function definitiveAgreementFailure(error: unknown): boolean {
   return error instanceof ApiError && [
     'INVALID_REQUEST', 'INVALID_AMOUNT', 'AMOUNT_OVERFLOW', 'DEADLINE_PASSED', 'RESOURCE_NOT_FOUND',
     'IDEMPOTENCY_KEY_REQUIRED', 'VERSION_CONFLICT', 'INVALID_STATE', 'DOCUMENT_REQUIRED', 'INVALID_PDF', 'INVALID_DOCUMENT',
-    'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_MEDIA_TYPE', 'FORBIDDEN', 'INSUFFICIENT_AVAILABLE_FUNDS', 'CONSENTS_MISSING', 'DOCUMENT_MISMATCH', 'RESERVE_REQUIRED',
+    'PAYLOAD_TOO_LARGE', 'UNSUPPORTED_MEDIA_TYPE', 'FORBIDDEN', 'INSUFFICIENT_AVAILABLE_FUNDS', 'CONSENTS_MISSING', 'DOCUMENT_MISMATCH', 'RESERVE_REQUIRED', 'CANCELLATION_SELF_APPROVAL', 'SETTLEMENT_BLOCKED',
   ].includes(error.code);
 }

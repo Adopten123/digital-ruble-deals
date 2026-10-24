@@ -26,27 +26,28 @@ type Party struct {
 	Kind string `json:"kind"`
 }
 type Deal struct {
-	ID                  string      `json:"id"`
-	DealVersion         int64       `json:"deal_version"`
-	Status              string      `json:"status"`
-	CustomerPartyID     string      `json:"customer_party_id"`
-	SupplierPartyID     string      `json:"supplier_party_id"`
-	Title               string      `json:"title"`
-	Description         string      `json:"description"`
-	AmountKopecks       string      `json:"amount_kopecks"`
-	Currency            string      `json:"currency"`
-	DeadlineAt          time.Time   `json:"deadline_at"`
-	Customer            Party       `json:"customer"`
-	Supplier            Party       `json:"supplier"`
-	Document            *Document   `json:"document"`
-	Agreements          []Agreement `json:"agreements"`
-	Signatures          []Signature `json:"signatures"`
-	Reserve             *Reserve    `json:"reserve"`
-	PaymentID           *string     `json:"payment_id"`
-	Dispute             any         `json:"dispute"`
-	CancellationRequest any         `json:"cancellation_request"`
-	CreatedAt           time.Time   `json:"created_at"`
-	UpdatedAt           time.Time   `json:"updated_at"`
+	ID                  string               `json:"id"`
+	DealVersion         int64                `json:"deal_version"`
+	Status              string               `json:"status"`
+	CustomerPartyID     string               `json:"customer_party_id"`
+	SupplierPartyID     string               `json:"supplier_party_id"`
+	Title               string               `json:"title"`
+	Description         string               `json:"description"`
+	AmountKopecks       string               `json:"amount_kopecks"`
+	Currency            string               `json:"currency"`
+	DeadlineAt          time.Time            `json:"deadline_at"`
+	Customer            Party                `json:"customer"`
+	Supplier            Party                `json:"supplier"`
+	Document            *Document            `json:"document"`
+	Agreements          []Agreement          `json:"agreements"`
+	Signatures          []Signature          `json:"signatures"`
+	Reserve             *Reserve             `json:"reserve"`
+	PaymentID           *string              `json:"payment_id"`
+	Dispute             *Dispute             `json:"dispute"`
+	CancellationRequest *CancellationRequest `json:"cancellation_request"`
+	ReviewReasons       []string             `json:"review_reasons"`
+	CreatedAt           time.Time            `json:"created_at"`
+	UpdatedAt           time.Time            `json:"updated_at"`
 }
 
 func (d *Deal) Normalize() {
@@ -56,6 +57,9 @@ func (d *Deal) Normalize() {
 	}
 	if d.Signatures == nil {
 		d.Signatures = []Signature{}
+	}
+	if d.ReviewReasons == nil {
+		d.ReviewReasons = []string{}
 	}
 }
 
