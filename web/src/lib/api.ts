@@ -145,6 +145,10 @@ export interface AuditEvent {
   error_code: string | null; details: AuditDetails;
 }
 export type AuditExportFormat = 'csv' | 'json';
+export interface Notification { id: string; created_at: string; read_at: string | null; event: AuditEvent }
+export interface NotificationPage extends Page<Notification> { unread_count: number }
+export interface NotificationQuery { unread?: boolean; limit?: number }
+
 
 const errorMessages: Record<string, string> = {
   INVALID_REQUEST: 'Проверьте заполненные поля и повторите запрос.',
@@ -365,6 +369,26 @@ export class ApiClient {
   }
   demoMoney(accountId: string, operation: 'credits' | 'debits', input: DemoMoneyInput, key: string): Promise<DemoMoneyResult> {
     return this.mutate(`/demo/accounts/${encodeURIComponent(accountId)}/${operation}`, input, key, true);
+  }
+  async notifications(query: NotificationQuery = {}, cursor?: string, signal?: AbortSignal): Promise<NotificationPage> {
+    const generation = this.tokenGeneration;
+    const params = new URLSearchParams({ limit: String(query.limit ?? 20) });
+    if (query.unread !== undefined) params.set('unread', String(query.unread));
+    if (cursor) params.set('cursor', cursor);
+    const result = await this.request<NotificationPage>(`/notifications?${params}`, { signal, headers: this.identityHeaders() });
+    if (generation !== this.tokenGeneration) throw new ApiError(409, 'SESSION_CHANGED');
+    return result;
+  }
+  async markNotificationRead(id: string, signal?: AbortSignal): Promise<void> {
+    const generation = this.tokenGeneration;
+    const identity = this.identityHeaders();
+    const token = await this.csrf();
+    signal?.throwIfAborted();
+    if (generation !== this.tokenGeneration) throw new ApiError(409, 'SESSION_CHANGED');
+    await this.request<void>(`/notifications/${encodeURIComponent(id)}/read`, {
+      method: 'POST', signal, headers: { ...identity, 'X-CSRF-Token': token },
+    });
+    if (generation !== this.tokenGeneration) throw new ApiError(409, 'SESSION_CHANGED');
   }
   private auditQuery(filters: DemoAuditFilters, cursor?: string): string {
     const query = new URLSearchParams({ limit: '20' });
