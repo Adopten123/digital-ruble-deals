@@ -36,7 +36,7 @@ test('HTTP responses use fresh request IDs, JSON errors and protective headers',
       const headers = response.headers();
       expect(headers['content-type']).toMatch(/^application\/json;\s*charset=utf-8/i);
       expect(headers['cache-control']).toContain('no-store');
-      expect(headers['x-content-type-options']).toContain('nosniff');
+      expect(headers['x-content-type-options']).toBe('nosniff');
       expect(headers['referrer-policy']).toContain('same-origin');
       expect(headers['content-security-policy']).toContain("frame-ancestors 'none'");
       expect(headers['x-request-id']).toMatch(/^[A-Za-z0-9_-]{43}$/);

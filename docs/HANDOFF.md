@@ -1,5 +1,10 @@
 # Передача разработки «ПоАкту» в новый чат
 
+Текущий этап — feature/deal-history-export, [PR #16](https://github.com/Adopten123/digital-ruble-deals/pull/16): история сделки / оператора, safe DTO, одинаковые права текущей и исторической стороны, CSV / JSON. OpenAPI 0.6.0 содержит 35 операций; схема остаётся 001–008. Локально 132 E2E PASS / 63 unit, Go / PostgreSQL / vet / сборки / smoke restart; после финальной правки native-scrollbar отдельно 9 UI/setup PASS. Ручные H01–H10 — 10 PASS, [отчёт](reports/2026-10-24-deal-history.md). Финальный CI / merge сверять в STATUS и PR. Работа ведётся в attached worktree test-signatures; исходную папку с четырьмя пользовательскими файлами и output/ сохранять. Далее — доставка уведомлений, A19, CLI-демонстрация и второй ПК.
+
+Историческое описание предыдущего этапа:
+
+
 Текущий этап — feature/edo-settlement: миграции 007/008, спор / двусторонняя отмена, HMAC / inbox / доставка и однократная выплата. OpenAPI 0.5.0 описывает 32 операции (31 браузерная и одна внутренняя). Реализованы сервер и интерфейс; полный Go / PostgreSQL / vet, 118 E2E, 55 unit / оба typecheck / build, upgrade / lease / restart и 14 ручных кейсов пройдены. [Отчёт](reports/2026-10-24-edo-settlement.md), [PR #15](https://github.com/Adopten123/digital-ruble-deals/pull/15). Финальные CI / merge сверять с STATUS.md. Следующие функции MVP — уведомления, экспорт, A19 и проверка на втором ПК. Основная рабочая папка с пользовательскими файлами сохраняется; работа идёт в attached worktree test-signatures, ветка feature/edo-settlement.
 
 Исторический этап 23 октября — тестовые подписи: `feature/test-signatures`, [PR #14](https://github.com/Adopten123/digital-ruble-deals/pull/14), [отчёт](reports/2026-10-23-test-signatures.md). Миграции 001–006, 25 операций API, FUNDED → READY_TO_SETTLE после двух точных подписей своей организации; деньги остаются в резерве. Фиксируется одно неизменяемое основание ЭДО, доставки / HMAC / выплаты ещё нет. Следующая функция — проверяемая доставка и единственная выплата с блокирующими действиями / гонками. Сначала сверить Git / STATUS и сохранить изменения основной папки.

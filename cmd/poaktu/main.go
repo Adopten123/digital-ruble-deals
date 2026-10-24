@@ -18,6 +18,9 @@ import (
 	corepg "github.com/Adopten123/digital-ruble-deals/internal/core/repository/postgres"
 	"github.com/Adopten123/digital-ruble-deals/internal/core/security"
 	httpapi "github.com/Adopten123/digital-ruble-deals/internal/core/transport/http"
+	auditrepo "github.com/Adopten123/digital-ruble-deals/internal/features/audit/repository/postgres"
+	auditservice "github.com/Adopten123/digital-ruble-deals/internal/features/audit/service"
+	audithttp "github.com/Adopten123/digital-ruble-deals/internal/features/audit/transport/http"
 	authrepo "github.com/Adopten123/digital-ruble-deals/internal/features/auth/repository/postgres"
 	authservice "github.com/Adopten123/digital-ruble-deals/internal/features/auth/service"
 	authhttp "github.com/Adopten123/digital-ruble-deals/internal/features/auth/transport/http"
@@ -147,6 +150,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 	dealhttp.New(dealservice.New(dealrepo.New(pool), key, files), csrf).RegisterRoutes(mux, authHandler.Require)
 	settlementhttp.New(settlementservice.New(settlementrepo.New(pool), key), csrf).RegisterRoutes(mux, authHandler.Require)
 	edohttp.New(edoService, csrf).RegisterRoutes(mux, authHandler.Require)
+	audithttp.New(auditservice.New(auditrepo.New(pool), key)).RegisterRoutes(mux, authHandler.Require)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.JSON(w, 200, map[string]string{"status": "ok", "contour": "test"})
 	})

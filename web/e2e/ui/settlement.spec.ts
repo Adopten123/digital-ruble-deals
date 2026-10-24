@@ -95,17 +95,20 @@ test('a lost cancellation request survives reload and its historical replay read
     await openDeal(customer.page, setup.deal.id);
     const requests: ReturnType<typeof sent>[] = [];
     let replayStatus = '';
+    let firstCommitConfirmed = false;
     await customer.page.route('**/api/v1/deals/' + setup.deal.id + '/cancellation-requests', async route => {
       requests.push(sent(route.request()));
       const response = await route.fetch();
       expect(response.status()).toBe(201);
-      if (requests.length === 1) await route.abort('failed');
+      if (requests.length === 1) { firstCommitConfirmed = true; await route.abort('failed'); }
       else { replayStatus = (await response.json()).deal.status; await route.fulfill({ response }); }
     });
     await requestCancellation(customer.page, 'Ответ не получен, отменяем по согласию');
     await expect(customer.page.getByText('Команда ожидает подтверждения: запрос отмены', { exact: true })).toBeVisible();
     const storageKey = 'poaktu:pending-agreement:' + setup.session.organisation!.id + ':' + setup.deal.id;
     const original = await customer.page.evaluate(key => sessionStorage.getItem(key), storageKey);
+    // Pending is stored before transport; wait for the real 201 before asserting committed state.
+    await expect.poll(() => firstCommitConfirmed).toBe(true);
     expect(JSON.parse(original!)).toMatchObject({ kind: 'cancel-request', input: { deal_version: setup.deal.deal_version, reason: 'Ответ не получен, отменяем по согласию' } });
     expect(await actual(setup.customer, setup.deal.id)).toMatchObject({ status: 'CANCELLATION_PENDING', reserve: { status: 'ACTIVE' }, payment_id: null });
     expect(await account(setup.customer)).toMatchObject({ total_kopecks: '50000', reserved_kopecks: '30000', available_kopecks: '20000' });

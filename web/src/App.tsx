@@ -6,6 +6,7 @@ import { formatRubles, validateBalances } from './lib/money';
 import Deals from './Deals';
 import DemoAccounts from './DemoAccounts';
 import DemoEDO from './DemoEDO';
+import AuditHistory from './AuditHistory';
 
 type Readiness = 'checking' | 'ready' | 'unavailable';
 
@@ -234,7 +235,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
 }
 
 function Workspace({ session, onUnauthorized }: { session: Session; onUnauthorized: (error: unknown) => void }) {
-  const [tab, setTab] = useState<'account' | 'deals' | 'catalog' | 'demo' | 'edo'>('account');
+  const [tab, setTab] = useState<'account' | 'deals' | 'catalog' | 'demo' | 'edo' | 'audit'>('account');
   const isOperator = session.user.system_role === 'DEMO_OPERATOR';
   return <div className="workspace">
     <div className="workspace-heading">
@@ -249,11 +250,13 @@ function Workspace({ session, onUnauthorized }: { session: Session; onUnauthoriz
       {session.organisation && <button className={tab === 'deals' ? 'active' : ''} aria-current={tab === 'deals' ? 'page' : undefined} onClick={() => setTab('deals')}>Сделки</button>}
       {isOperator && <button className={tab === 'demo' ? 'active' : ''} aria-current={tab === 'demo' ? 'page' : undefined} onClick={() => setTab('demo')}>Учебные счета</button>}
       {isOperator && <button className={tab === 'edo' ? 'active' : ''} aria-current={tab === 'edo' ? 'page' : undefined} onClick={() => setTab('edo')}>События ЭДО</button>}
+      {isOperator && <button className={tab === 'audit' ? 'active' : ''} aria-current={tab === 'audit' ? 'page' : undefined} onClick={() => setTab('audit')}>Аудит</button>}
       <button className={tab === 'catalog' ? 'active' : ''} aria-current={tab === 'catalog' ? 'page' : undefined} onClick={() => setTab('catalog')}>Контрагенты</button>
     </nav>
-    {tab === 'edo' && isOperator ? <DemoEDO key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
+    {tab === 'audit' && isOperator ? <AuditHistory key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
+      : tab === 'edo' && isOperator ? <DemoEDO key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
       : tab === 'demo' && isOperator ? <DemoAccounts key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
-      : tab === 'deals' && session.organisation ? <Deals key={session.user.id} organisation={session.organisation} onUnauthorized={onUnauthorized} />
+      : tab === 'deals' && session.organisation ? <Deals key={session.user.id} userId={session.user.id} organisation={session.organisation} onUnauthorized={onUnauthorized} />
       : tab === 'catalog' ? <Catalog key={session.user.id} ownId={session.organisation?.id} onUnauthorized={onUnauthorized} />
       : session.organisation ? <Account key={session.user.id} session={session} onUnauthorized={onUnauthorized} />
         : <section className="panel operator-scope"><div className="section-icon" aria-hidden="true">↳</div><h2>Отдельный доступ оператора</h2>

@@ -130,8 +130,25 @@ export interface DealFilters {
   created_to?: string;
 }
 
+export interface AuditFilters { type?: string; from?: string; to?: string }
+export interface DemoAuditFilters extends AuditFilters { deal_id?: string }
+export interface AuditDetails {
+  operation?: string; status?: string; document_id?: string; document_version?: number;
+  document_sha256?: string; reason?: string; decision?: string; cancellation_request_id?: string;
+  reserve_id?: string; payment_id?: string; event_id?: string; amount_kopecks?: string; currency?: string;
+  account_id?: string; transaction_id?: string;
+}
+export interface AuditEvent {
+  id: string; deal_id: string | null; deal_version: number | null; type: string;
+  actor_user_id: string | null; actor_organization_id: string | null; actor_source: string | null;
+  request_id: string; created_at: string; result: 'SUCCEEDED' | 'REJECTED' | 'RECORDED';
+  error_code: string | null; details: AuditDetails;
+}
+export type AuditExportFormat = 'csv' | 'json';
+
 const errorMessages: Record<string, string> = {
   INVALID_REQUEST: 'Проверьте заполненные поля и повторите запрос.',
+  EXPORT_TOO_LARGE: 'В истории больше 5 000 событий. Сузьте период или выберите тип события для выгрузки.',
   AUTH_REQUIRED: 'Войдите в аккаунт, чтобы продолжить.',
   INVALID_CREDENTIALS: 'Не удалось войти. Проверьте email и пароль.',
   SESSION_EXPIRED: 'Сессия завершилась. Войдите снова.',
@@ -348,6 +365,44 @@ export class ApiClient {
   }
   demoMoney(accountId: string, operation: 'credits' | 'debits', input: DemoMoneyInput, key: string): Promise<DemoMoneyResult> {
     return this.mutate(`/demo/accounts/${encodeURIComponent(accountId)}/${operation}`, input, key, true);
+  }
+  private auditQuery(filters: DemoAuditFilters, cursor?: string): string {
+    const query = new URLSearchParams({ limit: '20' });
+    for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value);
+    if (cursor) query.set('cursor', cursor);
+    return query.toString();
+  }
+  private async auditPage(path: string): Promise<Page<AuditEvent>> {
+    const generation = this.tokenGeneration;
+    const result = await this.request<Page<AuditEvent>>(path, { headers: this.identityHeaders() });
+    if (generation !== this.tokenGeneration) throw new ApiError(409, 'SESSION_CHANGED');
+    return result;
+  }
+  dealAudit(id: string, filters: AuditFilters = {}, cursor?: string): Promise<Page<AuditEvent>> {
+    return this.auditPage(`/deals/${encodeURIComponent(id)}/audit?${this.auditQuery(filters, cursor)}`);
+  }
+  demoAudit(filters: DemoAuditFilters = {}, cursor?: string): Promise<Page<AuditEvent>> {
+    return this.auditPage(`/demo/audit?${this.auditQuery(filters, cursor)}`);
+  }
+  async exportDealAudit(id: string, format: AuditExportFormat, filters: AuditFilters = {}): Promise<Blob> {
+    const generation = this.tokenGeneration;
+    const params = new URLSearchParams({ format });
+    for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+    const mime = format === 'csv' ? 'text/csv' : 'application/json';
+    const response = await this.fetcher(`/api/v1/deals/${encodeURIComponent(id)}/audit/export?${params}`, {
+      credentials: 'same-origin', headers: { ...this.identityHeaders(), Accept: mime },
+    });
+    if (!response.ok) {
+      const error = parseApiError(response.status, await response.json().catch(() => null));
+      if (generation === this.tokenGeneration && (error.code === 'CSRF_INVALID' || error.code === 'SESSION_CHANGED' || response.status === 401)) this.clearCsrf();
+      throw error;
+    }
+    if (response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== mime) {
+      throw new Error('Сервер вернул файл неизвестного формата. История не загружена.');
+    }
+    const blob = await response.blob();
+    if (generation !== this.tokenGeneration) throw new ApiError(409, 'SESSION_CHANGED');
+    return blob;
   }
   document(id: string, version?: number): Promise<DealDocument> {
     return this.request(`/documents/${encodeURIComponent(id)}${version === undefined ? '' : `?version=${version}`}`, { headers: this.identityHeaders() });

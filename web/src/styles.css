@@ -18,7 +18,7 @@
 }
 body {
   margin:0;
-  min-width:320px
+  min-width:0
 }
 button,input,select,textarea {
   font:inherit
@@ -589,11 +589,18 @@ input:disabled,select:disabled,textarea:disabled {
 }
 .workspace-tabs {
   display:flex;
+  flex-wrap:wrap;
+  min-width:0;
   gap:32px;
+  row-gap:14px;
   border-bottom:1px solid #d9e3f0;
   margin:32px 0
 }
 .workspace-tabs button {
+  min-width:0;
+  max-width:100%;
+  white-space:normal;
+  overflow-wrap:anywhere;
   border:0;
   border-bottom:2px solid transparent;
   background:none;
@@ -1369,7 +1376,8 @@ textarea { resize:vertical; line-height:1.65 }
   }
   .workspace-tabs {
     margin:25px 0;
-    gap:25px
+    gap:25px;
+    row-gap:10px
   }
   .workspace-tabs button {
     font-size:12px;
@@ -1663,4 +1671,48 @@ textarea { resize:vertical; line-height:1.65 }
   .demo-account-row>div:last-child { text-align:left; max-width:100%; width:100% }
   .demo-money-panel { padding:20px }
   .demo-money-panel form>.button { width:100%; justify-content:center }
+}
+
+.audit-history { margin-top:20px; padding:28px; min-width:0; overflow-wrap:anywhere }
+.audit-history h3 { font-size:20px; margin:0 0 10px }
+.audit-history h4 { font-size:14px; margin:0 0 7px }
+.audit-filters { margin:24px 0 18px; padding-top:20px; border-top:1px solid var(--border) }
+.audit-filters>div>label,.audit-filter-grid label { margin-top:0 }
+.audit-filter-grid { display:grid; grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr)); gap:16px; margin-top:16px }
+.audit-filter-grid>div { min-width:0 }
+.audit-filter-grid select { max-width:100%; text-overflow:ellipsis }
+.audit-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:16px }
+.audit-actions>.button,.audit-history>.button { font-size:12px; white-space:normal; max-width:100%; justify-content:center }
+.audit-caption,.audit-empty { color:var(--muted); font-size:12px; line-height:1.8 }
+.audit-events { list-style:none; padding:0; margin:18px 0 }
+.audit-event { padding:22px 0; border-top:1px solid var(--border); min-width:0 }
+.audit-event:last-child { border-bottom:1px solid var(--border) }
+.audit-event-heading { display:flex; justify-content:space-between; gap:16px; align-items:flex-start }
+.audit-event-heading>div { min-width:0 }
+.audit-event-heading code,.audit-actor code,.audit-error code { display:block; font-size:10px; margin-top:6px; overflow-wrap:anywhere }
+.audit-event-heading>.tag { flex:none; max-width:45%; white-space:normal; line-height:1.7; text-align:center }
+.audit-result-succeeded { background:#e6f5ee; color:#26764f }
+.audit-result-rejected { background:#fff1ed; color:#9d482e }
+.audit-time,.audit-actor,.audit-decision,.audit-error,.audit-event article>p { font-size:12px; line-height:1.8 }
+.audit-time small { display:block; color:var(--muted); font-size:10px; overflow-wrap:anywhere }
+.audit-reason { background:#f6f9fd; border-radius:10px; padding:14px; margin:14px 0; font-size:12px; line-height:1.8 }
+.audit-reason p { white-space:pre-wrap; margin:6px 0 0; overflow-wrap:anywhere }
+.audit-event-details { margin-top:15px; font-size:12px }
+.audit-event-details summary { cursor:pointer; color:var(--blue); line-height:1.8 }
+.audit-facts { margin:12px 0 0; font-size:12px }
+.audit-facts>div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:18px; padding:9px 0 }
+.audit-facts dt { color:var(--muted) }
+.audit-facts dd { margin:0; min-width:0; overflow-wrap:anywhere }
+.audit-export { margin-top:24px; border-top:1px solid var(--border); padding-top:22px }
+.audit-download { font-size:12px; line-height:1.8 }
+.audit-download a { color:var(--blue); overflow-wrap:anywhere }
+.audit-history>.notice,.audit-export>.notice { margin:16px 0 }
+@media(max-width:700px) {
+  .audit-history { padding:20px }
+  .audit-filter-grid { grid-template-columns:1fr; gap:15px }
+  .audit-event-heading { flex-direction:column; gap:10px }
+  .audit-event-heading>.tag { max-width:100% }
+  .audit-actions { align-items:stretch }
+  .audit-actions>.button { flex:1 1 150px }
+  .audit-facts>div { grid-template-columns:80px minmax(0,1fr); gap:12px; font-size:11px }
 }
