@@ -8,12 +8,15 @@ import { localDateTime, plainRubles } from './lib/deals';
 import SupplierPicker from './SupplierPicker';
 import DealReserve from './DealReserve';
 import DealSignatures from './DealSignatures';
+import DealResolution from './DealResolution';
+import { blockingCommand } from './lib/blockers';
 
 interface Props { deal: Deal; ownId: string; onDeal: (deal: Deal) => void; onUnauthorized: (error: unknown) => void }
 const commandLabels: Record<AgreementCommand['kind'], string> = {
   update: 'изменение условий', upload: 'загрузка PDF', generate: 'формирование акта', agree: 'согласование документа', rework: 'возврат на доработку',
   reserve: 'резервирование средств',
   sign: 'тестовая подпись документа',
+  dispute: 'открытие спора', 'cancel-request': 'запрос отмены', 'cancel-accept': 'принятие отмены', 'cancel-reject': 'отказ от отмены',
 };
 
 export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: Props) {
@@ -54,7 +57,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
     && item.document_id === document.id && item.document_version === document.document_version && item.document_sha256 === document.sha256) : [];
   const hasAgreed = currentAgreements.some(item => item.organisation_id === ownId);
   const pendingVersion = pending ? pending.kind === 'update' ? pending.input.expected_version
-    : pending.kind === 'agree' || pending.kind === 'rework' || pending.kind === 'reserve' || pending.kind === 'sign' ? pending.input.deal_version : pending.input.expected_deal_version : null;
+    : 'deal_version' in pending.input ? pending.input.deal_version : pending.input.expected_deal_version : null;
 
   async function run(command?: AgreementCommand) {
     if (busy || storageError != null) return;
@@ -88,6 +91,10 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
         case 'rework': await api.reworkDeal(attempt.dealId, attempt.input, attempt.key); break;
         case 'reserve': await api.reserveDeal(attempt.dealId, attempt.input, attempt.key); break;
         case 'sign': await api.signDocument(attempt.documentId, attempt.input, attempt.key); break;
+        case 'dispute': await api.openDispute(attempt.dealId, attempt.input, attempt.key); break;
+        case 'cancel-request': await api.requestCancellation(attempt.dealId, attempt.input, attempt.key); break;
+        case 'cancel-accept': await api.decideCancellation(attempt.dealId, attempt.requestId, 'accept', attempt.input, attempt.key); break;
+        case 'cancel-reject': await api.decideCancellation(attempt.dealId, attempt.requestId, 'reject', attempt.input, attempt.key); break;
         case 'upload': await api.uploadDocument(attempt.dealId, attempt.input.expected_deal_version, file!, attempt.input.file_name, attempt.key); break;
       }
       // A cached idempotent reply can describe an earlier version. Always read current server state.
@@ -96,14 +103,14 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
       setPending(null); setEditing(false); setReworking(false); setReason(''); setConsent(false);
       setNotice('Команда подтверждена сервером.');
       const actual = await api.deal(attempt.dealId);
-      if (isCurrent()) { onDeal(actual); if (attempt.kind === 'reserve') setBalanceRevision(value => value + 1); }
+      if (isCurrent()) { onDeal(actual); if (attempt.kind === 'reserve' || attempt.kind === 'cancel-accept' || attempt.kind === 'sign') setBalanceRevision(value => value + 1); }
     } catch (failure) {
       if (attempt && definitiveAgreementFailure(failure)) {
         try { removePendingAgreement(sessionStorage, ownId, attempt.dealId, attempt.key); if (isCurrent()) setPending(null); }
         catch (storageFailure) { if (isCurrent()) setStorageError(storageFailure); }
       }
       if (isCurrent()) {
-        if (failure instanceof ApiError && ['VERSION_CONFLICT', 'INVALID_STATE', 'DEADLINE_PASSED', 'DOCUMENT_MISMATCH', 'CONSENTS_MISSING', 'RESERVE_REQUIRED'].includes(failure.code)) setRefreshRequired(true);
+        if (failure instanceof ApiError && ['VERSION_CONFLICT', 'INVALID_STATE', 'DEADLINE_PASSED', 'DOCUMENT_MISMATCH', 'CONSENTS_MISSING', 'RESERVE_REQUIRED', 'CANCELLATION_SELF_APPROVAL', 'SETTLEMENT_BLOCKED'].includes(failure.code)) setRefreshRequired(true);
         if (attempt?.kind === 'reserve') setBalanceRevision(value => value + 1);
         setError(failure); onUnauthorized(failure);
       }
@@ -144,7 +151,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
   }
 
   return <section className="panel agreement-panel" aria-label="Документ и согласование">
-    <div className="agreement-heading"><div><h3>Документ и согласование</h3><p className="muted">{pending?.kind === 'reserve' ? 'Результат резервирования уточняется. Средства могли быть закреплены; проверьте прежнюю команду.' : deal.reserve ? 'Условия и PDF закреплены резервом. Исполнителю средства пока не выплачены.' : 'Сначала согласуйте одну версию условий и PDF. Средства пока свободны.'}</p></div>
+    <div className="agreement-heading"><div><h3>Документ и согласование</h3><p className="muted">{pending?.kind === 'reserve' ? 'Результат резервирования уточняется. Проверьте прежнюю команду.' : deal.payment_id ? 'Расчёт завершён. Условия, PDF и подписи сохранены.' : deal.reserve?.status === 'RELEASED' ? 'Сделка завершена согласованной отменой. Резерв освобождён.' : deal.reserve ? 'Условия и PDF закреплены резервом. Исполнителю средства пока не выплачены.' : deal.status === 'CANCELLED' ? 'Сделка отменена. Условия и PDF сохранены для просмотра.' : 'Сначала согласуйте одну версию условий и PDF. Средства пока свободны.'}</p></div>
       {customer && deal.status === 'DRAFT' && <button className="button button-quiet" type="button" disabled={locked || expired} onClick={() => setEditing(value => !value)}>Редактировать условия</button>}
     </div>
     {storageError != null && <div className="notice notice-error" role="alert">{describeError(storageError)}</div>}
@@ -152,6 +159,8 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
       {pending.kind === 'update' && <span>Сохранённые условия: «{pending.input.title}», сумма {plainRubles(pending.input.amount_kopecks!)} ₽, исполнитель {pending.input.supplier_party_id}.</span>}
       {(pending.kind === 'agree' || pending.kind === 'sign') && <><span>{pending.kind === 'sign' ? 'Подпись' : 'Согласование'} PDF версии {pending.input.document_version}.</span><code className="document-hash">SHA-256: {pending.input.document_sha256}</code></>}
       {pending.kind === 'rework' && <span>Причина: {pending.input.reason}</span>}
+      {(pending.kind === 'dispute' || pending.kind === 'cancel-request' || pending.kind === 'cancel-reject') && <span>Причина: {pending.input.reason}</span>}
+      {(pending.kind === 'cancel-accept' || pending.kind === 'cancel-reject') && <span>Решение относится к запросу отмены {pending.requestId}.</span>}
       {pending.kind === 'upload' && <><span>Повторно выберите исходный PDF с теми же байтами. Имя отправки останется «{pending.input.file_name}», размер {pending.input.size_bytes.toLocaleString('ru-RU')} байт.</span><code className="document-hash">SHA-256: {pending.input.sha256}</code></>}
       <button className="button button-primary" type="button" disabled={busy || (pending.kind === 'upload' && !file)} onClick={() => void run()}>{busy ? 'Проверяем…' : 'Проверить результат команды'}</button>
     </div>}
@@ -186,6 +195,7 @@ export default function DealAgreement({ deal, ownId, onDeal, onUnauthorized }: P
     </div>
     <DealReserve deal={deal} ownId={ownId} locked={locked} revision={balanceRevision} onReserve={() => validateAndRun(() => ({ kind: 'reserve', input: reserveDealInput(deal) }))} onUnauthorized={onUnauthorized} />
     <DealSignatures key={`${deal.deal_version}:${document?.document_version}`} deal={deal} ownId={ownId} locked={locked} onSign={() => validateAndRun(() => signDocumentCommand(deal, ownId))} />
+    <DealResolution deal={deal} ownId={ownId} locked={locked} onCommand={(kind, reason) => validateAndRun(() => blockingCommand(deal, ownId, kind, reason))} />
   </section>;
 }
 

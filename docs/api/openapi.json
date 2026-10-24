@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "ПоАкту — реализованный HTTP API",
-    "version": "0.4.0",
-    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Все 25 реализованных операций: авторизация, организации, сделки, версии PDF, два согласия, доработка, резерв, тестовые подписи и учебные счета оператора. Деньги — целые копейки строками, JSON до16KiB, PDF до5MiB. Резерв меняет reserved/available, сохраняя total; перевод исполнителю не выполняется. Credit/debit доступны только DEMO_OPERATOR и проходят через сбалансированные проводки; debit не тратит активный резерв. Первая тестовая подпись сохраняет FUNDED без движения денег; вторая переводит в READY_TO_SETTLE и сохраняет единственное основание ЭДО. Доставка ЭДО, выплата, споры, отмена, уведомления и A19 ещё не реализованы. Cookie pa_session/pa_csrf + X-CSRF-Token и точный Origin=APP_ORIGIN; X-Expected-User-ID проверяет ожидаемый аккаунт. После login/register обновить csrfToken в Authorize. Все изменяющие предметные команды используют сохранённые тело и Idempotency-Key; неизвестный исход повторять тем же телом/ключом. Проектный контракт будущих функций — docs/API.md."
+    "version": "0.5.0",
+    "description": "Тестовый контур. Расчёты и ЭДО эмулируются. Реализованы 31 браузерная операция и один внутренний обработчик ЭДО. После полного резерва две точные подписи сохраняют READY_TO_SETTLE; отдельная доставка с HMAC / durable inbox выполняет одну выплату. Спор и активная отмена блокируют выплату; два голоса разных организаций освобождают резерв. Отказ отмены и срок сохраняют REVIEW_REQUIRED без автоматического расчёта / освобождения. Деньги — целые копейки строками; JSON до 16 KiB, PDF до 5 MiB, внутреннее событие до 64 KiB. Все доменные команды используют исходные тело и Idempotency-Key при неизвестном исходе. Cookie pa_session / pa_csrf и X-CSRF-Token; Origin=APP_ORIGIN, X-Expected-User-ID проверяет ожидаемый аккаунт. Внутренний маршрут недоступен через web-proxy; HMAC-секрет не выдаётся браузеру. Уведомления, экспорт и A19 — следующие этапы."
   },
   "servers": [
     {
@@ -29,6 +29,16 @@
     },
     {
       "name": "Учебные счета"
+    },
+    {
+      "name": "Спор и отмена"
+    },
+    {
+      "name": "Тестовый ЭДО"
+    },
+    {
+      "name": "Внутренний ЭДО",
+      "description": "Служебный HMAC-маршрут, недоступный из внешнего web-origin. Cookie и CSRF его не авторизуют."
     }
   ],
   "security": [],
@@ -6590,7 +6600,7 @@
           "Документы"
         ],
         "summary": "Тестовая подпись своей организации после резерва",
-        "description": "Только участник сделки, закреплённые условия / PDF / две согласующие стороны и ACTIVE-резерв. Новая подпись допустима до срока; SHA-256 и размер приватного файла проверяются на сервере. Первая подпись не меняет деньги; вторая создаёт READY_TO_SETTLE и одно устойчивое основание ЭДО, без доставки и выплаты. Тот же ключ возвращает точный исторический ответ; изменённое тело — конфликт. Новый ключ для существующей подписи возвращает тот же факт и актуальную сделку без повторного аудита / outbox, в том числе после срока. После исторического ответа перечитать GET сделки. Оператор / посторонняя организация не подписывают и получают 404.",
+        "description": "Точная подпись своей организации после полного резерва. Новая подпись требует FUNDED, актуальных версий / SHA-256, двух согласий, доступного приватного файла и отсутствия блокировок / срока. Первая оставляет FUNDED; вторая атомарно создаёт READY_TO_SETTLE и устойчивое основание ЭДО. После commit worker отдельно доставляет исходные байты с HMAC; подтверждённое событие выполняет расчёт. Тот же ключ возвращает исторический ответ. Новый ключ для уже сохранённой собственной подписи возвращает тот же факт и текущую сделку даже после срока / SETTLED / отмены, без нового действия. Оператор / посторонняя организация получают 404.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ExpectedUser"
@@ -6977,6 +6987,1853 @@
           }
         }
       }
+    },
+    "/api/v1/deals/{id}/disputes": {
+      "post": {
+        "operationId": "openDispute",
+        "tags": [
+          "Спор и отмена"
+        ],
+        "summary": "Открыть спор до выплаты",
+        "description": "AGREED / FUNDED / READY / REVIEW и активная отмена. Спор сохраняется независимо от активной отмены и не меняет деньги. Новый ключ при уже существующем споре возвращает существующий факт; терминальная сделка — 409. В MVP нет автоматического арбитража или возобновления выплаты.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST, IDEMPOTENCY_KEY_REQUIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED, SESSION_EXPIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_INVALID",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SESSION_CHANGED, IDEMPOTENCY_CONFLICT, VERSION_CONFLICT, INVALID_STATE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/cancellation-requests": {
+      "post": {
+        "operationId": "requestCancellation",
+        "tags": [
+          "Спор и отмена"
+        ],
+        "summary": "Запросить согласованную отмену",
+        "description": "Любая нетерминальная сделка. Запрос содержит голос инициатора и блокирует выплату. Новый ключ инициатора активного запроса возвращает тот же факт без второго голоса; запрос другой стороны при активном — 409. Новый запрос после отклонения не снимает сохранённую причину проверки.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancellationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST, IDEMPOTENCY_KEY_REQUIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED, SESSION_EXPIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_INVALID",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SESSION_CHANGED, IDEMPOTENCY_CONFLICT, VERSION_CONFLICT, INVALID_STATE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/cancellation-requests/{request_id}/accept": {
+      "post": {
+        "operationId": "acceptCancellation",
+        "tags": [
+          "Спор и отмена"
+        ],
+        "summary": "Принять отмену другой организации",
+        "description": "Только другая организация и текущий активный запрос, в том числе после срока. Второй голос даёт CANCELLED без резерва либо RELEASED / REFUNDED с освобождением reserved. Total и деньги исполнителя не меняются; повтор не освобождает второй раз.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancellationAccept"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancellationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST, IDEMPOTENCY_KEY_REQUIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED, SESSION_EXPIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_INVALID",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SESSION_CHANGED, IDEMPOTENCY_CONFLICT, VERSION_CONFLICT, INVALID_STATE, CANCELLATION_SELF_APPROVAL",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CANCELLATION_SELF_APPROVAL": {
+                    "value": {
+                      "error": {
+                        "code": "CANCELLATION_SELF_APPROVAL",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deals/{id}/cancellation-requests/{request_id}/reject": {
+      "post": {
+        "operationId": "rejectCancellation",
+        "tags": [
+          "Спор и отмена"
+        ],
+        "summary": "Отклонить отмену другой организации",
+        "description": "Только другая организация, текущий активный запрос и причина. Закрывает запрос и сохраняет REVIEW_REQUIRED; выплата не возобновляется. Старые голоса не переносятся в новый запрос.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подтверждённый результат либо точный сохранённый ответ.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancellationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST, IDEMPOTENCY_KEY_REQUIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED, SESSION_EXPIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_INVALID",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SESSION_CHANGED, IDEMPOTENCY_CONFLICT, VERSION_CONFLICT, INVALID_STATE, CANCELLATION_SELF_APPROVAL",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "VERSION_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "VERSION_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "INVALID_STATE": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_STATE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CANCELLATION_SELF_APPROVAL": {
+                    "value": {
+                      "error": {
+                        "code": "CANCELLATION_SELF_APPROVAL",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/demo/edo/events": {
+      "post": {
+        "operationId": "queueEDOEvent",
+        "tags": [
+          "Тестовый ЭДО"
+        ],
+        "summary": "Поставить учебное событие ЭДО в очередь",
+        "description": "Только DEMO_OPERATOR. 202 означает сохранённое задание, результат читается отдельно. valid использует только фактические подписи; недостающая подпись не создаётся оператором. Повторы доставки сохраняют ID / исходные bytes, меняются только timestamp / HMAC. Секрет не выдаётся браузеру.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EDOCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Задание сохранено, выплата ещё не подтверждена.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EDOQueued"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST, IDEMPOTENCY_KEY_REQUIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "IDEMPOTENCY_KEY_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_KEY_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED, SESSION_EXPIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN, CSRF_INVALID",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CSRF_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "CSRF_INVALID",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_CONFLICT, SESSION_CHANGED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "IDEMPOTENCY_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "IDEMPOTENCY_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "DOCUMENT_REQUIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "DOCUMENT_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "DOCUMENT_REQUIRED",
+                        "message": "Для события нужен текущий PDF"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/demo/edo/events/{event_id}": {
+      "get": {
+        "operationId": "getEDOEvent",
+        "tags": [
+          "Тестовый ЭДО"
+        ],
+        "summary": "Прочитать последнюю доставку данного event_id",
+        "description": "Только DEMO_OPERATOR; возвращается последняя доставка, включая job_id, число попыток и финальный ответ. После replay / same_id_different_body тот же event_id может иметь новый job_id. Raw bytes / HMAC / lease и секрет не выдаются.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExpectedUser"
+          },
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Последнее задание доставки события.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EDODelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "AUTH_REQUIRED, SESSION_EXPIRED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "AUTH_REQUIRED": {
+                    "value": {
+                      "error": {
+                        "code": "AUTH_REQUIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SESSION_EXPIRED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_EXPIRED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "FORBIDDEN": {
+                    "value": {
+                      "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "RESOURCE_NOT_FOUND": {
+                    "value": {
+                      "error": {
+                        "code": "RESOURCE_NOT_FOUND",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "SESSION_CHANGED",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "SESSION_CHANGED": {
+                    "value": {
+                      "error": {
+                        "code": "SESSION_CHANGED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/edo/events": {
+      "post": {
+        "operationId": "receiveInternalEDOEvent",
+        "tags": [
+          "Внутренний ЭДО"
+        ],
+        "x-internal": true,
+        "summary": "Внутренний приём проверяемого события и единственный расчёт",
+        "description": "Недоступен через внешний web-proxy; Swagger на web-origin не может вызвать этот маршрут. Cookie / CSRF не авторизуют. До inbox проверяются HMAC и строгая схема. Затем durable PENDING, отдельная транзакция inbox → сделка → отсортированные счета → резерв; свежая проверка срока. Полное решение / ledger / CONSUMED / SETTLED / финальный inbox / audit / outbox атомарны. Тот же source+event_id+raw body возвращает сохранённый исход; другое тело даёт 409. Новый корректный event_id уже оплаченной сделки возвращает already_settled с прежним payment_id после всех проверок привязок. 503 требует повторить прежние bytes / ID с новым транспортным временем и HMAC.",
+        "security": [
+          {
+            "edoKeyID": [],
+            "edoTimestamp": [],
+            "edoSignature": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Точный исходный JSON UTF-8 до 64 KiB; не нормализовать тело между попытками.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EDOEvent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Единственный расчёт либо сохранённый результат / прежний payment_id.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EDOResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_REQUEST",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "INVALID_REQUEST": {
+                    "value": {
+                      "error": {
+                        "code": "INVALID_REQUEST",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "EDO_SOURCE_INVALID",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "EDO_SOURCE_INVALID": {
+                    "value": {
+                      "error": {
+                        "code": "EDO_SOURCE_INVALID",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "EVENT_ID_CONFLICT",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "EVENT_ID_CONFLICT": {
+                    "value": {
+                      "error": {
+                        "code": "EVENT_ID_CONFLICT",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PAYLOAD_TOO_LARGE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "PAYLOAD_TOO_LARGE": {
+                    "value": {
+                      "error": {
+                        "code": "PAYLOAD_TOO_LARGE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "UNSUPPORTED_MEDIA_TYPE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "UNSUPPORTED_MEDIA_TYPE": {
+                    "value": {
+                      "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "EVENT_BINDING_MISMATCH, SIGNATURES_MISSING, SETTLEMENT_BLOCKED, CONSENTS_MISSING, DEADLINE_PASSED, AMOUNT_OVERFLOW",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "EVENT_BINDING_MISMATCH": {
+                    "value": {
+                      "error": {
+                        "code": "EVENT_BINDING_MISMATCH",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SIGNATURES_MISSING": {
+                    "value": {
+                      "error": {
+                        "code": "SIGNATURES_MISSING",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "SETTLEMENT_BLOCKED": {
+                    "value": {
+                      "error": {
+                        "code": "SETTLEMENT_BLOCKED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "CONSENTS_MISSING": {
+                    "value": {
+                      "error": {
+                        "code": "CONSENTS_MISSING",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "DEADLINE_PASSED": {
+                    "value": {
+                      "error": {
+                        "code": "DEADLINE_PASSED",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  },
+                  "AMOUNT_OVERFLOW": {
+                    "value": {
+                      "error": {
+                        "code": "AMOUNT_OVERFLOW",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "TEMPORARILY_UNAVAILABLE",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "TEMPORARILY_UNAVAILABLE": {
+                    "value": {
+                      "error": {
+                        "code": "TEMPORARILY_UNAVAILABLE",
+                        "message": "Понятная причина отказа"
+                      },
+                      "request_id": "synthetic-request-id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7087,7 +8944,7 @@
           "stage": {
             "type": "string",
             "enum": [
-              "test_signatures"
+              "edo_settlement"
             ]
           }
         }
@@ -7580,7 +9437,8 @@
           "dispute",
           "cancellation_request",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "review_reasons"
         ],
         "properties": {
           "id": {
@@ -7601,9 +9459,14 @@
               "AGREED",
               "FUNDED",
               "READY_TO_SETTLE",
-              "REVIEW_REQUIRED"
+              "DISPUTED",
+              "CANCELLATION_PENDING",
+              "REVIEW_REQUIRED",
+              "SETTLED",
+              "CANCELLED",
+              "REFUNDED"
             ],
-            "description": "AGREED — два согласия до резерва; FUNDED — активный полный резерв и не более одной тестовой подписи. READY_TO_SETTLE — две подписи и сохранённое основание ЭДО; выплата ещё не выполнена. Наступивший срок читается как REVIEW_REQUIRED с сохранением резерва и подписей."
+            "description": "Приоритет: терминальный исход → срок / сохранённый отказ отмены → активная отмена → спор → обычная фаза. Причины блокировки показываются независимо."
           },
           "customer_party_id": {
             "type": "string",
@@ -7791,7 +9654,9 @@
               "status": {
                 "type": "string",
                 "enum": [
-                  "ACTIVE"
+                  "ACTIVE",
+                  "CONSUMED",
+                  "RELEASED"
                 ]
               },
               "created_at": {
@@ -7799,31 +9664,180 @@
                 "format": "date-time"
               }
             },
-            "description": "Активный резерв полной суммы одной версии сделки. Не является выплатой или реальной операцией цифрового рубля.",
+            "description": "Полный резерв сделки: ACTIVE удерживается, CONSUMED погашен единственной выплатой, RELEASED освобождён двумя сторонами без перевода исполнителю.",
             "nullable": true
           },
           "payment_id": {
             "type": "string",
-            "nullable": true,
-            "enum": [
-              null
-            ]
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128,
+            "nullable": true
           },
           "dispute": {
             "type": "object",
-            "nullable": true,
-            "enum": [
-              null
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "deal_id",
+              "deal_version",
+              "organisation_id",
+              "user_id",
+              "reason",
+              "created_at"
             ],
-            "description": "На текущем этапе всегда null; соответствующая функция ещё не реализована."
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "deal_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "deal_version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              "organisation_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "user_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы."
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "nullable": true
           },
           "cancellation_request": {
             "type": "object",
-            "nullable": true,
-            "enum": [
-              null
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "deal_id",
+              "deal_version",
+              "initiator_organisation_id",
+              "initiator_user_id",
+              "reason",
+              "status",
+              "created_at",
+              "decision"
             ],
-            "description": "На текущем этапе всегда null; соответствующая функция ещё не реализована."
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "deal_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "deal_version": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              "initiator_organisation_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "initiator_user_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "ACCEPTED",
+                  "REJECTED"
+                ]
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "decision": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "organisation_id",
+                  "user_id",
+                  "decision",
+                  "reason",
+                  "created_at"
+                ],
+                "properties": {
+                  "organisation_id": {
+                    "type": "string",
+                    "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "user_id": {
+                    "type": "string",
+                    "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "ACCEPTED",
+                      "REJECTED"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000,
+                    "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы.",
+                    "nullable": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "nullable": true
+              }
+            },
+            "nullable": true,
+            "description": "Только активный PENDING-запрос либо null. Закрытый запрос сохраняется в ответе своей команды и истории."
           },
           "created_at": {
             "type": "string",
@@ -7834,6 +9848,17 @@
             "type": "string",
             "description": "RFC 3339. Ответ сервера в UTC; срок создания нормализуется до микросекунд PostgreSQL.",
             "format": "date-time"
+          },
+          "review_reasons": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "DEADLINE_PASSED",
+                "CANCELLATION_REJECTED"
+              ]
+            }
           }
         }
       },
@@ -8179,7 +10204,9 @@
           "status": {
             "type": "string",
             "enum": [
-              "ACTIVE"
+              "ACTIVE",
+              "CONSUMED",
+              "RELEASED"
             ]
           },
           "created_at": {
@@ -8187,7 +10214,7 @@
             "format": "date-time"
           }
         },
-        "description": "Активный резерв полной суммы одной версии сделки. Не является выплатой или реальной операцией цифрового рубля."
+        "description": "Полный резерв сделки: ACTIVE удерживается, CONSUMED погашен единственной выплатой, RELEASED освобождён двумя сторонами без перевода исполнителю."
       },
       "ReserveDeal": {
         "type": "object",
@@ -8432,6 +10459,691 @@
             "$ref": "#/components/schemas/Deal"
           }
         }
+      },
+      "Dispute": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "deal_id",
+          "deal_version",
+          "organisation_id",
+          "user_id",
+          "reason",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "organisation_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CancellationDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "organisation_id",
+          "user_id",
+          "decision",
+          "reason",
+          "created_at"
+        ],
+        "properties": {
+          "organisation_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "ACCEPTED",
+              "REJECTED"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы.",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CancellationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "deal_id",
+          "deal_version",
+          "initiator_organisation_id",
+          "initiator_user_id",
+          "reason",
+          "status",
+          "created_at",
+          "decision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "initiator_organisation_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "initiator_user_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "ACCEPTED",
+              "REJECTED"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "organisation_id",
+              "user_id",
+              "decision",
+              "reason",
+              "created_at"
+            ],
+            "properties": {
+              "organisation_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "user_id": {
+                "type": "string",
+                "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "ACCEPTED",
+                  "REJECTED"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы.",
+                "nullable": true
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "nullable": true
+          }
+        }
+      },
+      "ReasonCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal_version",
+          "reason"
+        ],
+        "properties": {
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Непустая причина после trim, до 2000 символов Unicode; переводы строк допустимы."
+          }
+        }
+      },
+      "CancellationAccept": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal_version"
+        ],
+        "properties": {
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      },
+      "DisputeResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dispute",
+          "deal"
+        ],
+        "properties": {
+          "dispute": {
+            "$ref": "#/components/schemas/Dispute"
+          },
+          "deal": {
+            "$ref": "#/components/schemas/Deal"
+          }
+        }
+      },
+      "CancellationResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cancellation_request",
+          "deal"
+        ],
+        "properties": {
+          "cancellation_request": {
+            "$ref": "#/components/schemas/CancellationRequest"
+          },
+          "deal": {
+            "$ref": "#/components/schemas/Deal"
+          }
+        }
+      },
+      "EDOCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deal_id",
+          "template"
+        ],
+        "properties": {
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "valid",
+              "single_signature",
+              "wrong_amount",
+              "wrong_parties",
+              "wrong_document",
+              "wrong_document_version",
+              "wrong_document_hash",
+              "wrong_deal_version",
+              "invalid_hmac",
+              "replay",
+              "same_id_different_body"
+            ]
+          },
+          "replay_event_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "description": "replay_event_id обязателен только для replay / same_id_different_body и запрещён для остальных шаблонов. Сторонние подписи и произвольное тело создать нельзя."
+      },
+      "EDOQueued": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "event_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "EDOResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "result",
+          "deal_id",
+          "payment_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "settled",
+              "already_settled"
+            ]
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "payment_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "EDODelivery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "event_id",
+          "deal_id",
+          "template",
+          "status",
+          "attempts",
+          "http_status",
+          "result",
+          "error_code",
+          "created_at",
+          "completed_at"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "valid",
+              "single_signature",
+              "wrong_amount",
+              "wrong_parties",
+              "wrong_document",
+              "wrong_document_version",
+              "wrong_document_hash",
+              "wrong_deal_version",
+              "invalid_hmac",
+              "replay",
+              "same_id_different_body"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "DELIVERED"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "http_status": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 200,
+            "maximum": 499
+          },
+          "result": {
+            "type": "object",
+            "nullable": true,
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "event_id",
+                  "result",
+                  "deal_id",
+                  "payment_id"
+                ],
+                "properties": {
+                  "event_id": {
+                    "type": "string",
+                    "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "settled",
+                      "already_settled"
+                    ]
+                  },
+                  "deal_id": {
+                    "type": "string",
+                    "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "payment_id": {
+                    "type": "string",
+                    "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "nullable": true
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "error",
+                  "request_id"
+                ],
+                "properties": {
+                  "error": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "code",
+                      "message"
+                    ],
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "description": "Машинный код. Полный справочник — docs/api/README.md.",
+                        "enum": [
+                          "INVALID_REQUEST",
+                          "INVALID_AMOUNT",
+                          "IDEMPOTENCY_KEY_REQUIRED",
+                          "IDEMPOTENCY_CONFLICT",
+                          "DEADLINE_PASSED",
+                          "RESOURCE_NOT_FOUND",
+                          "FORBIDDEN",
+                          "CSRF_INVALID",
+                          "AUTH_REQUIRED",
+                          "SESSION_EXPIRED",
+                          "SESSION_CHANGED",
+                          "INVALID_CREDENTIALS",
+                          "EMAIL_CONFLICT",
+                          "TEMPORARILY_UNAVAILABLE",
+                          "UNSUPPORTED_MEDIA_TYPE",
+                          "PAYLOAD_TOO_LARGE",
+                          "INTERNAL_ERROR",
+                          "RATE_LIMITED",
+                          "VERSION_CONFLICT",
+                          "INVALID_STATE",
+                          "DOCUMENT_REQUIRED",
+                          "DOCUMENT_MISMATCH",
+                          "INVALID_DOCUMENT",
+                          "CONSENTS_MISSING",
+                          "INSUFFICIENT_AVAILABLE_FUNDS",
+                          "AMOUNT_OVERFLOW"
+                        ]
+                      },
+                      "message": {
+                        "type": "string",
+                        "description": "Сообщение сервера; клиент может показывать собственный перевод кода."
+                      }
+                    }
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "description": "ID исходного ответа. При повторе сохранённого отказа может отличаться от нового X-Request-ID."
+                  }
+                },
+                "nullable": true
+              }
+            ],
+            "description": "Финальный JSON получателя; null до завершения доставки. DELIVERED может содержать 4xx и не означает успешной выплаты."
+          },
+          "error_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "EDOEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "event_id",
+          "source",
+          "event_type",
+          "deal_id",
+          "deal_version",
+          "document_id",
+          "document_version",
+          "document_sha256",
+          "customer_party_id",
+          "supplier_party_id",
+          "amount_kopecks",
+          "currency",
+          "signed_by_customer",
+          "signed_by_supplier",
+          "customer_signature_id",
+          "supplier_signature_id",
+          "occurred_at"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "edo-emulator"
+            ]
+          },
+          "event_type": {
+            "type": "string",
+            "enum": [
+              "document.accepted_by_both"
+            ]
+          },
+          "deal_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deal_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "document_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "document_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "customer_party_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "supplier_party_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "amount_kopecks": {
+            "type": "string",
+            "description": "Положительные целые копейки строкой: 1..9223372036854775807. Верхняя граница проверяется сервером.",
+            "pattern": "^[1-9][0-9]*$",
+            "maxLength": 19,
+            "example": "30000000"
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "RUB"
+            ]
+          },
+          "signed_by_customer": {
+            "type": "boolean"
+          },
+          "signed_by_supplier": {
+            "type": "boolean"
+          },
+          "customer_signature_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128,
+            "nullable": true
+          },
+          "supplier_signature_id": {
+            "type": "string",
+            "description": "Непрозрачный ID сервера. Не разбирать и не выводить из названия.",
+            "minLength": 1,
+            "maxLength": 128,
+            "nullable": true
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "Все 18 полей обязательны, неизвестные / дублирующиеся ключи запрещены. При true ID подписи непустой, при false соответствующий ID равен null. Ссылки сверяются с двумя реальными действиями сторон, версиями и SHA-256. occurred_at не продлевает deadline."
       }
     },
     "parameters": {
@@ -8544,6 +11256,24 @@
         "in": "header",
         "name": "X-CSRF-Token",
         "description": "Токен из GET /api/v1/auth/csrf или успешного login/register, связанный с cookie pa_csrf и текущей сессией. Не является Bearer токеном."
+      },
+      "edoKeyID": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-EDO-Key-ID",
+        "description": "Идентификатор серверного ключа demo-v1; не секрет."
+      },
+      "edoTimestamp": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-EDO-Timestamp",
+        "description": "Канонические Unix seconds, отклонение не более ±300 секунд."
+      },
+      "edoSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-EDO-Signature",
+        "description": "sha256=<lowercase hex>, HMAC-SHA256(timestamp + newline + точные raw bytes). Секрет хранится только на сервере."
       }
     }
   }

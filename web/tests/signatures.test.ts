@@ -11,7 +11,7 @@ const deal: Deal = {
   customer: { id: 'customer-a', name: 'Заказчик', kind: 'COMPANY' }, supplier: { id: 'supplier-a', name: 'Исполнитель', kind: 'IP' },
   document: { id: 'document-a', deal_id: 'deal-a', deal_version: 2, document_version: 1, sha256: binding.document_sha256, file_name: 'акт.pdf', size_bytes: 512, content_type: 'application/pdf', created_at: '2026-10-23T00:00:00Z' },
   agreements: ['customer-a', 'supplier-a'].map(organisation_id => ({ id: `agreement-${organisation_id}`, organisation_id, user_id: `user-${organisation_id}`, created_at: '2026-10-23T00:00:00Z', ...binding })),
-  signatures: [], reserve: { id: 'reserve-a', deal_id: 'deal-a', deal_version: 2, account_id: 'account-a', amount_kopecks: '30000', currency: 'RUB', status: 'ACTIVE', created_at: '2026-10-23T00:00:00Z' },
+  signatures: [], review_reasons: [], reserve: { id: 'reserve-a', deal_id: 'deal-a', deal_version: 2, account_id: 'account-a', amount_kopecks: '30000', currency: 'RUB', status: 'ACTIVE', created_at: '2026-10-23T00:00:00Z' },
   payment_id: null, dispute: null, cancellation_request: null, created_at: '2026-10-23T00:00:00Z', updated_at: '2026-10-23T00:00:00Z',
 };
 function signature(organisation_id: string): DealSignature {

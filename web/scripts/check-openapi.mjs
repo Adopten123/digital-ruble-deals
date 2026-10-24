@@ -24,7 +24,7 @@ for (const path of ['cmd/poaktu/main.go', ...await goFiles('internal/features/')
   const source = await readFile(new URL(path, root), 'utf8');
   for (const match of source.matchAll(/mux\.Handle(?:Func)?\("((?:GET|POST|PATCH|PUT|DELETE) [^"]+)"/g)) registered.push(match[1]);
 }
-assert.deepEqual(documented, registered.sort(), 'OpenAPI operations must match all registered public routes');
+assert.deepEqual(documented, registered.sort(), 'OpenAPI operations must match all registered HTTP routes');
 const ids = Object.values(spec.paths).flatMap(methods => Object.values(methods).map(operation => operation.operationId));
 assert.equal(new Set(ids).size, ids.length, 'operationId must be unique');
 assert.deepEqual(spec.servers.map(server => server.url), ['/'], 'Interactive requests must use the current origin');

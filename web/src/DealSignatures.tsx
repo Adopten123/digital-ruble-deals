@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import type { Deal } from './lib/api';
 import { currentSignatures, signDocumentCommand } from './lib/agreement';
+import { terminalDeal } from './lib/blockers';
 
 export default function DealSignatures({ deal, ownId, locked, onSign }: {
   deal: Deal; ownId: string; locked: boolean; onSign: () => void;
@@ -26,8 +27,8 @@ export default function DealSignatures({ deal, ownId, locked, onSign }: {
       <button className="button button-primary" type="button" disabled={locked || !confirmed} onClick={onSign}>Подписать документ в тестовом контуре</button>
     </div>}
     {ownSignature && deal.status === 'FUNDED' && <div className="notice notice-info" role="status"><strong>Ваша тестовая подпись сохранена</strong><span>Ожидается подпись второй стороны. Средства остаются в резерве, выплата не выполнена.</span></div>}
-    {deal.status === 'READY_TO_SETTLE' && <div className="notice notice-success" role="status"><strong>Документ подписан обеими сторонами</strong><span>Ожидается расчёт в тестовом контуре. Средства остаются в резерве, выплата не выполнена. Автоматическая выплата пока недоступна.</span></div>}
-    {!deal.reserve && <p className="field-help">Подписание откроется после согласования документа и резерва полной суммы заказчиком.</p>}
-    {expired && deal.reserve && <p className="field-help">Срок сделки наступил. Новая подпись закрыта; обновите карточку и проверьте ситуацию со второй стороной.</p>}
+    {new Set(signatures.map(item => item.organisation_id)).size === 2 && <div className="notice notice-success" role="status"><strong>Документ подписан обеими сторонами</strong><span>{deal.status === 'READY_TO_SETTLE' ? 'Событие ЭДО обрабатывается. Результат расчёта обновится в этой карточке.' : deal.status === 'SETTLED' ? 'Тестовый расчёт завершён; подписи сохранены.' : 'Подписи сохранены. Возможность расчёта зависит от состояния сделки и блокировок.'}</span></div>}
+    {!deal.reserve && !terminalDeal(deal) && <p className="field-help">Подписание откроется после согласования документа и резерва полной суммы заказчиком.</p>}
+    {expired && deal.reserve && !terminalDeal(deal) && <p className="field-help">Срок сделки наступил. Новая подпись закрыта; обновите карточку и проверьте ситуацию со второй стороной.</p>}
   </section>;
 }

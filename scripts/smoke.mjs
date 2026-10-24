@@ -57,6 +57,23 @@ class Client {
   }
 }
 
+async function waitCard(client, id, status) {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const { json } = await client.request('/api/v1/deals/' + id);
+    if (json.status === status) return json;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error('Expected persisted deal status ' + status);
+}
+async function waitDelivery(client, eventID) {
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const { json } = await client.request('/api/v1/demo/edo/events/' + eventID);
+    if (json.status === 'DELIVERED') return json;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error('EDO job did not reach a durable result');
+}
+
 async function ready() {
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
@@ -64,7 +81,7 @@ async function ready() {
       if (response.status === 200) {
         const body = await response.json();
         assert.equal(body.contour, 'test');
-        assert.equal(body.stage, 'test_signatures');
+        assert.equal(body.stage, 'edo_settlement');
         return;
       }
     } catch (error) {
@@ -72,7 +89,7 @@ async function ready() {
     }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  throw new Error('Test signature API did not become ready');
+  throw new Error('EDO settlement API did not become ready');
 }
 
 await ready();
@@ -137,7 +154,7 @@ assert.equal(customerAccount.account.available_kopecks, '50000000');
 const supplier = new Client();
 await supplier.login('supplier@demo.poaktu.local');
 const { json: supplierAccount } = await supplier.request('/api/v1/organisations/me');
-assert.equal(supplierAccount.account.total_kopecks, '0');
+assert.match(supplierAccount.account.total_kopecks, /^(0|[1-9][0-9]*)$/);
 assert.notEqual(supplierAccount.organisation.id, customerIdentity.organisation.id);
 
 const operator = new Client();
@@ -151,59 +168,77 @@ const stateFile = process.env.SMOKE_STATE_FILE;
 let previousState;
 if (stateFile && existsSync(stateFile)) {
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
-  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3'].includes(saved.kind));
+  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3', 'poaktu-edo-settlement-smoke-v4'].includes(saved.kind));
   previousState = saved;
-  const { json: persisted } = await customer.request(`/api/v1/deals/${encodeURIComponent(saved.id)}`);
+  const { json: persisted } = await customer.request('/api/v1/deals/' + encodeURIComponent(saved.id));
   assert.equal(persisted.title, saved.body.title);
   const { json: replayed } = await customer.request('/api/v1/deals', {
     method: 'POST', body: saved.body, headers: { 'Idempotency-Key': saved.key }, expected: 201,
   });
-  assert.equal(replayed.id, saved.id, 'Restart must preserve idempotent create results');
+  assert.equal(replayed.id, saved.id, 'Restart preserves the original create result');
   if (saved.money) {
-    assert.match(saved.money.email, /^smoke-[a-f0-9-]+@demo\.poaktu\.local$/);
+    const m = saved.money;
+    assert.match(m.email, /^smoke-[a-f0-9-]+@demo\.poaktu\.local$/);
     const previousCustomer = new Client();
-    await previousCustomer.login(saved.money.email, 'SmokeOnlyPassword2026!');
+    await previousCustomer.login(m.email, 'SmokeOnlyPassword2026!');
+    const previousSupplier = m.settlement ? new Client() : supplier;
+    if (m.settlement) {
+      assert.match(m.settlement.supplier_email, /^smoke-supplier-[a-f0-9-]+@demo\.poaktu\.local$/);
+      await previousSupplier.login(m.settlement.supplier_email, 'SmokeOnlyPassword2026!');
+    }
+    const card = m.signatures
+      ? await waitCard(previousCustomer, m.deal_id, 'SETTLED')
+      : (await previousCustomer.request('/api/v1/deals/' + m.deal_id)).json;
     const { json: account } = await previousCustomer.request('/api/v1/organisations/me');
-    assert.equal(account.account.id, saved.money.account_id);
-    assert.equal(account.account.total_kopecks, '30000');
-    assert.equal(account.account.reserved_kopecks, '30000');
+    assert.equal(account.account.id, m.account_id);
+    assert.equal(account.account.total_kopecks, m.signatures ? '0' : '30000');
+    assert.equal(account.account.reserved_kopecks, m.signatures ? '0' : '30000');
     assert.equal(account.account.available_kopecks, '0');
-    const { json: card } = await previousCustomer.request(`/api/v1/deals/${saved.money.deal_id}`);
-    assert.equal(card.status, saved.money.signatures ? 'READY_TO_SETTLE' : 'FUNDED');
+    assert.equal(card.status, m.signatures ? 'SETTLED' : 'FUNDED');
     assert.equal(card.agreements.length, 2);
-    assert.deepEqual(card.reserve, saved.money.reserve_result.reserve);
-    const { bytes } = await previousCustomer.request(`/api/v1/documents/${card.document.id}/download?version=${card.document.document_version}`, { binary: true });
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), card.document.sha256, 'Restart preserves exact private PDF bytes');
-    const { json: reserveReplay } = await previousCustomer.request(`/api/v1/deals/${card.id}/reserve`, {
-      method: 'POST', body: { deal_version: card.deal_version }, headers: { 'Idempotency-Key': saved.money.reserve_key }, expected: 201,
+    assert.deepEqual(card.reserve, { ...m.reserve_result.reserve, status: m.signatures ? 'CONSUMED' : 'ACTIVE' });
+    const { bytes } = await previousCustomer.request('/api/v1/documents/' + card.document.id + '/download?version=' + card.document.document_version, { binary: true });
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), card.document.sha256);
+    const { json: reserveReplay } = await previousCustomer.request('/api/v1/deals/' + card.id + '/reserve', {
+      method: 'POST', body: { deal_version: card.deal_version }, headers: { 'Idempotency-Key': m.reserve_key }, expected: 201,
     });
-    assert.deepEqual(reserveReplay, saved.money.reserve_result, 'Restart must replay the original reserve without a second hold');
-    const { json: creditReplay } = await operator.request(`/api/v1/demo/accounts/${saved.money.account_id}/credits`, {
-      method: 'POST', body: { amount_kopecks: '50000', reason: 'Учебное зачисление для smoke резервирования' }, headers: { 'Idempotency-Key': saved.money.credit_key }, expected: 201,
+    assert.deepEqual(reserveReplay, m.reserve_result, 'Restart replays the old ACTIVE receipt without creating a hold');
+    const { json: creditReplay } = await operator.request('/api/v1/demo/accounts/' + m.account_id + '/credits', {
+      method: 'POST', body: { amount_kopecks: '50000', reason: 'Учебное зачисление для smoke резервирования' }, headers: { 'Idempotency-Key': m.credit_key }, expected: 201,
     });
-    assert.equal(creditReplay.transaction_id, saved.money.credit_transaction_id, 'Restart must not credit again');
-    const { json: debitReplay } = await operator.request(`/api/v1/demo/accounts/${saved.money.account_id}/debits`, {
-      method: 'POST', body: { amount_kopecks: '20000', reason: 'Учебное списание только доступного остатка' }, headers: { 'Idempotency-Key': saved.money.debit_key }, expected: 201,
+    assert.equal(creditReplay.transaction_id, m.credit_transaction_id);
+    const { json: debitReplay } = await operator.request('/api/v1/demo/accounts/' + m.account_id + '/debits', {
+      method: 'POST', body: { amount_kopecks: '20000', reason: 'Учебное списание только доступного остатка' }, headers: { 'Idempotency-Key': m.debit_key }, expected: 201,
     });
-    assert.equal(debitReplay.transaction_id, saved.money.debit_transaction_id, 'Restart must not debit again');
-    if (saved.money.signatures) {
-      const signed = saved.money.signatures;
-      assert.deepEqual(card.signatures, signed.second_result.deal.signatures, 'Restart preserves the two exact signature facts');
-      for (const [client, key, original] of [[previousCustomer, signed.customer_key, signed.first_result], [supplier, signed.supplier_key, signed.second_result]]) {
+    assert.equal(debitReplay.transaction_id, m.debit_transaction_id);
+    if (m.signatures) {
+      const signed = m.signatures;
+      assert.deepEqual(card.signatures, signed.second_result.deal.signatures);
+      for (const [client, key, original] of [[previousCustomer, signed.customer_key, signed.first_result], [previousSupplier, signed.supplier_key, signed.second_result]]) {
         const { json: replay } = await client.request('/api/v1/documents/' + card.document.id + '/sign', {
           method: 'POST', body: signed.input, headers: { 'Idempotency-Key': key }, expected: 201,
         });
-        assert.deepEqual(replay, original, 'Restart preserves the original historical signature response');
+        assert.deepEqual(replay, original);
       }
-      const { json: current } = await previousCustomer.request('/api/v1/deals/' + card.id);
-      assert.equal(current.status, 'READY_TO_SETTLE');
-      assert.deepEqual(current.signatures, card.signatures, 'Replays do not append signatures or regress the current state');
-      assert.deepEqual(current.reserve, card.reserve);
-      assert.equal(current.payment_id, null);
+      assert.equal(typeof card.payment_id, 'string');
+      if (m.settlement) {
+        assert.equal(card.payment_id, m.settlement.payment_id);
+        const previousMoneySupplier = (await previousSupplier.request('/api/v1/organisations/me')).json.account;
+        assert.deepEqual(previousMoneySupplier, m.settlement.supplier_account);
+        const { json: oldJob } = await operator.request('/api/v1/demo/edo/events', {
+          method: 'POST', body: { deal_id: card.id, template: 'valid' },
+          headers: { 'Idempotency-Key': m.settlement.event_key }, expected: 202,
+        });
+        assert.deepEqual(oldJob, m.settlement.event_result);
+        const oldDelivery = await waitDelivery(operator, oldJob.event_id);
+        assert.deepEqual(oldDelivery, m.settlement.delivery_result, 'Restart preserves the final EDO result and delivery metadata');
+        assert.equal(oldDelivery.result.payment_id, card.payment_id);
+      }
     }
     const { json: afterReplay } = await previousCustomer.request('/api/v1/organisations/me');
     assert.deepEqual(afterReplay.account, account.account);
     await previousCustomer.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
+    if (m.settlement) await previousSupplier.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
   }
 }
 
@@ -276,17 +311,28 @@ const { json: expired } = await create({ ...dealBody, deadline_at: '2020-01-01T0
 assert.equal(expired.error.code, 'DEADLINE_PASSED');
 const { json: accountAfterDrafts } = await customer.request('/api/v1/organisations/me');
 assert.deepEqual(accountAfterDrafts.account, customerAccount.account, 'Drafts must not reserve or transfer funds');
+const moneySupplier = new Client();
+await moneySupplier.refreshCSRF();
+const moneySupplierEmail = 'smoke-supplier-' + randomUUID() + '@demo.poaktu.local';
+await moneySupplier.request('/api/v1/auth/register', {
+  method: 'POST', body: { email: moneySupplierEmail, password: 'SmokeOnlyPassword2026!',
+    organisation: { name: 'Учебный smoke-исполнитель ' + suffix, kind: 'COMPANY' } }, expected: 201,
+});
+await moneySupplier.refreshCSRF();
+const { json: moneySupplierAccount } = await moneySupplier.request('/api/v1/organisations/me');
+assert.equal(moneySupplierAccount.account.total_kopecks, '0');
+
 // Full implemented path: register -> credit -> draft -> PDF -> two consents ->
 // reserve -> debit only available -> two signatures -> private PDF/read/replay after restart.
 const moneyCreateKey = randomUUID();
 const { json: moneyDraft } = await unauthenticated.request('/api/v1/deals', {
-  method: 'POST', body: { ...dealBody, title: `Учебный резерв ${suffix}`, amount_kopecks: '30000' }, headers: { 'Idempotency-Key': moneyCreateKey }, expected: 201,
+  method: 'POST', body: { ...dealBody, supplier_party_id: moneySupplierAccount.organisation.id, title: `Учебный резерв ${suffix}`, amount_kopecks: '30000' }, headers: { 'Idempotency-Key': moneyCreateKey }, expected: 201,
 });
 const { json: moneyDocument } = await unauthenticated.request(`/api/v1/deals/${moneyDraft.id}/documents/generate`, {
   method: 'POST', body: { expected_deal_version: moneyDraft.deal_version, template_id: 'printing-acceptance-v1' }, headers: { 'Idempotency-Key': randomUUID() }, expected: 201,
 });
 const agreement = { deal_version: moneyDocument.deal.deal_version, document_id: moneyDocument.document.id, document_version: moneyDocument.document.document_version, document_sha256: moneyDocument.document.sha256 };
-for (const client of [unauthenticated, supplier]) await client.request(`/api/v1/deals/${moneyDraft.id}/agree`, { method: 'POST', body: agreement, headers: { 'Idempotency-Key': randomUUID() } });
+for (const client of [unauthenticated, moneySupplier]) await client.request(`/api/v1/deals/${moneyDraft.id}/agree`, { method: 'POST', body: agreement, headers: { 'Idempotency-Key': randomUUID() } });
 const creditKey = randomUUID(), debitKey = randomUUID(), reserveKey = randomUUID();
 const { json: credit } = await operator.request(`/api/v1/demo/accounts/${own.account.id}/credits`, {
   method: 'POST', body: { amount_kopecks: '50000', reason: 'Учебное зачисление для smoke резервирования' }, headers: { 'Idempotency-Key': creditKey }, expected: 201,
@@ -321,37 +367,53 @@ assert.equal(firstSignature.signature.organisation_id, own.organisation.id);
 assert.equal(firstSignature.signature.document_sha256, agreement.document_sha256);
 const { json: firstAccount } = await unauthenticated.request('/api/v1/organisations/me');
 assert.deepEqual(firstAccount.account, debitSnapshot, 'First signature must not change any money');
-const { json: secondSignature } = await supplier.request(signPath, {
+const { json: secondSignature } = await moneySupplier.request(signPath, {
   method: 'POST', body: signatureInput, headers: { 'Idempotency-Key': supplierSignatureKey }, expected: 201,
 });
 assert.equal(secondSignature.deal.status, 'READY_TO_SETTLE');
 assert.equal(secondSignature.deal.signatures.length, 2);
-assert.equal(secondSignature.signature.organisation_id, supplierAccount.organisation.id);
+assert.equal(secondSignature.signature.organisation_id, moneySupplierAccount.organisation.id);
 assert.deepEqual(secondSignature.deal.reserve, reserved.reserve);
 assert.equal(secondSignature.deal.payment_id, null);
 const { json: signatureReplay } = await unauthenticated.request(signPath, {
   method: 'POST', body: signatureInput, headers: { 'Idempotency-Key': customerSignatureKey }, expected: 201,
 });
 assert.deepEqual(signatureReplay, firstSignature, 'First signature replay is the original FUNDED response');
-const { json: signedCard } = await unauthenticated.request('/api/v1/deals/' + moneyDraft.id);
-assert.equal(signedCard.status, 'READY_TO_SETTLE');
+const signedCard = await waitCard(unauthenticated, moneyDraft.id, 'SETTLED');
+assert.equal(typeof signedCard.payment_id, 'string');
 assert.deepEqual(signedCard.signatures, secondSignature.deal.signatures);
+assert.deepEqual(signedCard.reserve, { ...reserved.reserve, status: 'CONSUMED' });
 const { json: signedAccount } = await unauthenticated.request('/api/v1/organisations/me');
-assert.deepEqual(signedAccount.account, debitSnapshot, 'Two signatures do not consume or release the reserve');
+assert.deepEqual(signedAccount.account, { ...debitSnapshot, total_kopecks: '0', reserved_kopecks: '0' });
+const { json: moneySupplierAfter } = await moneySupplier.request('/api/v1/organisations/me');
+assert.deepEqual(moneySupplierAfter.account, { ...moneySupplierAccount.account, total_kopecks: '30000', available_kopecks: '30000' });
+const eventKey = randomUUID();
+const { json: eventResult } = await operator.request('/api/v1/demo/edo/events', {
+  method: 'POST', body: { deal_id: moneyDraft.id, template: 'valid' }, headers: { 'Idempotency-Key': eventKey }, expected: 202,
+});
+const deliveryResult = await waitDelivery(operator, eventResult.event_id);
+assert.equal(deliveryResult.http_status, 200);
+assert.equal(deliveryResult.result.result, 'already_settled');
+assert.equal(deliveryResult.result.payment_id, signedCard.payment_id);
 const { json: supplierAfter } = await supplier.request('/api/v1/organisations/me');
-assert.deepEqual(supplierAfter.account, supplierAccount.account, 'Reserve, signatures and operator debit must not pay the supplier');
+assert.deepEqual(supplierAfter.account, supplierAccount.account, 'This smoke does not pay the shared demo supplier');
+const { json: seedAfter } = await customer.request('/api/v1/organisations/me');
+assert.deepEqual(seedAfter.account, customerAccount.account, 'This smoke does not spend the shared seed');
 const signatures = { input: signatureInput, customer_key: customerSignatureKey, supplier_key: supplierSignatureKey, first_result: firstSignature, second_result: secondSignature };
-const moneyState = { signatures, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey, reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
-if (stateFile && (!previousState?.money || !previousState.money.signatures)) {
-  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-test-signatures-smoke-v3', money: moneyState };
+const settlement = { payment_id: signedCard.payment_id, supplier_email: moneySupplierEmail, supplier_account: moneySupplierAfter.account,
+  event_key: eventKey, event_result: eventResult, delivery_result: deliveryResult };
+const moneyState = { signatures, settlement, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey,
+  reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
+if (stateFile && !previousState?.money?.settlement) {
+  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-edo-settlement-smoke-v4', money: moneyState };
   writeFileSync(stateFile, JSON.stringify(saved), { flag: previousState ? 'w' : 'wx', mode: 0o600 });
 }
 
-for (const client of [unauthenticated, customer, supplier, operator]) {
+for (const client of [unauthenticated, customer, supplier, moneySupplier, operator]) {
   const revoked = new Client();
   revoked.cookies = new Map(client.cookies);
   await client.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
   await revoked.request('/api/v1/auth/me', { expected: 401 });
 }
 
-console.log('Test signature smoke passed: auth/CSRF, scoped drafts, private PDF, two explicit consents, atomic reserve, two exact test signatures and READY_TO_SETTLE without payout, balanced demo credit/debit, protected available funds, unchanged seed/supplier balances, restart persistence and exact command replay when state file exists, server logout.');
+console.log('EDO settlement smoke passed: auth/CSRF, private PDF and exact signatures, reserved-fund payment with zero available, one settlement, source delivery/result, unchanged shared seed/supplier, historical command/inbox/delivery persistence after restart, server logout.');

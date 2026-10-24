@@ -1590,6 +1590,21 @@ textarea { resize:vertical; line-height:1.65 }
 .signature-list li>.tag { flex:none; max-width:145px; white-space:normal; text-align:center; line-height:1.6 }
 .signature-hash { display:block; margin-bottom:18px }
 .signature-confirm>.button { font-size:12px; white-space:normal; max-width:100% }
+.deal-resolution { margin-top:24px; padding-top:24px; border-top:1px solid var(--border); min-width:0 }
+.deal-resolution .notice { margin:18px 0; overflow-wrap:anywhere }
+.resolution-reason { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 }
+.resolution-form,.cancellation-accept { margin-top:22px; min-width:0 }
+.resolution-form>.button,.cancellation-accept>.button { margin-top:14px; font-size:12px; max-width:100%; white-space:normal }
+.demo-edo { min-width:0 }
+.edo-form,.edo-lookup,.edo-delivery { margin-top:20px; padding:25px; min-width:0; overflow-wrap:anywhere }
+.edo-form>.button { margin-top:22px; max-width:100%; white-space:normal; font-size:12px }
+.edo-form label:first-child,.edo-lookup>label { margin-top:0 }
+.edo-lookup-row { display:flex; gap:12px; align-items:center }
+.edo-lookup-row>input { min-width:0; flex:1 }
+.edo-lookup-row>.button { flex:none; font-size:12px; white-space:normal }
+.edo-delivery h3 { margin-bottom:18px }
+.demo-edo>.notice { margin:18px 0; overflow-wrap:anywhere }
+.demo-edo>.notice>.button { align-self:flex-start; font-size:12px; max-width:100%; white-space:normal }
 .checkbox-label { display:flex; gap:12px; align-items:flex-start; font-size:12px; font-weight:400; line-height:1.8; margin:0 0 18px }
 .checkbox-label>input { width:19px; height:19px; min-height:19px; flex:none; margin:3px 0 0; accent-color:var(--blue) }
 .agreement-confirm { margin:18px 0 22px }
@@ -1632,6 +1647,11 @@ textarea { resize:vertical; line-height:1.65 }
   .signature-list li { align-items:flex-start; flex-direction:column; gap:10px }
   .signature-list li>.tag { max-width:100% }
   .signature-confirm>.button { width:100%; justify-content:center }
+  .resolution-form>.button,.cancellation-accept>.button { width:100%; justify-content:center }
+  .edo-form,.edo-lookup,.edo-delivery { padding:20px }
+  .edo-form>.button { width:100%; justify-content:center }
+  .edo-lookup-row { flex-direction:column; align-items:stretch }
+  .edo-lookup-row>.button { justify-content:center }
   .agreement-confirm>.button,.rework-form>.button { width:100%; justify-content:center }
   .reserve-balances { grid-template-columns:1fr; gap:9px }
   .reserve-balances>div { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:14px }

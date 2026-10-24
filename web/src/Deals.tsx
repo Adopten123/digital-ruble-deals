@@ -7,13 +7,14 @@ import { createDealInput, dateBoundary, localDateTime, pendingStorageKey, plainR
 import type { PendingDealAttempt } from './lib/deals';
 import SupplierPicker from './SupplierPicker';
 import DealAgreement from './DealAgreement';
+import { statusLabels } from './lib/blockers';
 
 type ScopeProps = { onUnauthorized: (error: unknown) => void };
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 function dateLabel(value: string): string { return dateFormatter.format(new Date(value)); }
 function Status({ deal }: { deal: Deal }) {
   return <span className={`deal-status${deal.status === 'REVIEW_REQUIRED' ? ' deal-status-review' : ''}`}>
-    <span aria-hidden="true" />{deal.status === 'REVIEW_REQUIRED' ? 'Требует проверки' : deal.status === 'READY_TO_SETTLE' ? 'Ожидает расчёта' : deal.status === 'FUNDED' ? 'Средства зарезервированы' : deal.status === 'AGREED' ? 'Согласовано' : 'Черновик'}
+    <span aria-hidden="true" />{statusLabels[deal.status]}
   </span>;
 }
 function Failure({ error, retry }: { error: unknown; retry?: () => void }) {
@@ -98,7 +99,7 @@ function DealList({ ownId, onOpen, onUnauthorized }: ScopeProps & { ownId: strin
     <form className="deal-filters panel" onSubmit={search} role="search" aria-label="Поиск сделок">
       <div className="deal-search-row"><label className="visually-hidden" htmlFor={`${formId}-query`}>Поиск по названию, ID или контрагенту</label><div className="search-field"><span aria-hidden="true">⌕</span><input id={`${formId}-query`} value={query} onChange={(event) => setQuery(event.target.value)} maxLength={400} placeholder="Название, ID или контрагент" /></div><button className="button button-primary" type="submit" disabled={loading}>Найти</button></div>
       <div className="deal-filter-fields">
-        <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option><option value="DRAFT">Черновик</option><option value="AGREED">Согласовано</option><option value="FUNDED">Средства зарезервированы</option><option value="READY_TO_SETTLE">Ожидает расчёта</option><option value="REVIEW_REQUIRED">Требует проверки</option></select></div>
+        <div><label htmlFor={`${formId}-status`}>Состояние</label><select id={`${formId}-status`} value={status} onChange={(event) => setStatus(event.target.value as DealFilters['status'])}><option value="">Все состояния</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
         <div><label htmlFor={`${formId}-role`}>Моя роль</label><select id={`${formId}-role`} value={role} onChange={(event) => setRole(event.target.value as DealFilters['role'])}><option value="">Любая роль</option><option value="customer">Заказчик</option><option value="supplier">Исполнитель</option></select></div>
         <div><label htmlFor={`${formId}-from`}>Создана с</label><input type="date" id={`${formId}-from`} value={from} onChange={(event) => setFrom(event.target.value)} /></div>
         <div><label htmlFor={`${formId}-to`}>По дату включительно</label><input type="date" id={`${formId}-to`} value={to} onChange={(event) => setTo(event.target.value)} /></div>
@@ -186,7 +187,7 @@ function CreateDeal({ organisation, pending, onPending, onCreated, onBack, onUna
         {error != null && <Failure error={error} />}
         <div className="deal-form-footer"><p>Создание черновика не резервирует и не списывает средства.</p><button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Подтверждаем…' : pending ? 'Проверить результат создания' : 'Создать черновик'}<span aria-hidden="true">↗</span></button></div>
       </form>
-      <aside className="panel deal-guide"><div className="section-icon" aria-hidden="true">▤</div><h3>Сначала — ясные условия</h3><p>Исполнитель увидит сделку в своём кабинете. Выбор организации ещё не означает её согласие.</p><ol><li><strong>Условия</strong><span>Стороны, сумма, описание и срок</span></li><li><strong>Документ и согласование</strong><span>PDF и два явных согласия</span></li><li><strong>Резерв и подписи</strong><span>Полная сумма и две тестовые подписи</span></li></ol><p className="field-help">После создания добавьте PDF и получите согласие обеих сторон. Выплата по событию ЭДО будет доступна следующим этапом.</p></aside>
+      <aside className="panel deal-guide"><div className="section-icon" aria-hidden="true">▤</div><h3>Сначала — ясные условия</h3><p>Исполнитель увидит сделку в своём кабинете. Выбор организации ещё не означает её согласие.</p><ol><li><strong>Условия</strong><span>Стороны, сумма, описание и срок</span></li><li><strong>Документ и согласование</strong><span>PDF и два явных согласия</span></li><li><strong>Резерв и подписи</strong><span>Полная сумма и две тестовые подписи</span></li></ol><p className="field-help">Проверенное событие ЭДО запускает одну выплату при отсутствии блокировок. Спор или запрос отмены останавливает автоматическое продолжение.</p></aside>
     </div>
   </>;
 }
@@ -195,21 +196,38 @@ function DealDetail({ id, ownId, created, onBack, onUnauthorized }: ScopeProps &
   const [deal, setDeal] = useState<Deal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [pollError, setPollError] = useState<unknown>(null);
   const sequence = useRef(0);
   const load = useCallback(async () => {
     const request = ++sequence.current;
-    setLoading(true); setError(null); setDeal(null);
+    setLoading(true); setError(null); setPollError(null); setDeal(null);
     try { const result = await api.deal(id); if (request === sequence.current) setDeal(result); }
     catch (failure) { if (request === sequence.current) { setError(failure); onUnauthorized(failure); } }
     finally { if (request === sequence.current) setLoading(false); }
   }, [id, onUnauthorized]);
   useEffect(() => { void load(); return () => { sequence.current += 1; }; }, [load]);
+  useEffect(() => {
+    if (deal?.status !== 'READY_TO_SETTLE') return;
+    let current = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const revision = sequence.current;
+    async function refresh() {
+      try {
+        const actual = await api.deal(id);
+        if (current && revision === sequence.current) { setDeal(actual); setPollError(null); }
+      } catch (failure) { if (current && revision === sequence.current) { setPollError(failure); onUnauthorized(failure); } }
+      finally { if (current) timer = setTimeout(() => void refresh(), 2000); }
+    }
+    timer = setTimeout(() => void refresh(), 1000);
+    return () => { current = false; clearTimeout(timer); };
+  }, [deal?.status, id, onUnauthorized]);
   return <>
     <button className="text-button back-link" type="button" onClick={onBack}>← К списку сделок</button>
     {created && <div className="notice notice-success" role="status"><strong>Черновик создан</strong><span>Обе стороны могут открыть условия в своём кабинете. Средства не резервировались.</span></div>}
     {loading ? <div className="panel"><Busy>Открываем сделку</Busy></div> : error != null ? <Failure error={error} retry={() => void load()} /> : deal && <>
       <div className="deal-detail-heading"><div><div className="deal-row-meta"><Status deal={deal} /><span>Версия {deal.deal_version} · Вы — {deal.customer_party_id === ownId ? 'заказчик' : 'исполнитель'}</span></div><h2>{deal.title}</h2><code>{deal.id}</code></div><button className="button button-quiet" type="button" onClick={() => void load()}><span aria-hidden="true">↻</span>Обновить</button></div>
-      {deal.status === 'REVIEW_REQUIRED' && <div className="notice notice-review"><strong>Срок сделки наступил</strong><span>Ситуация требует проверки сторонами. Истечение срока не означает подтверждение работ или автоматический расчёт.</span></div>}
+      {pollError != null && <Failure error={pollError} />}
+      {deal.status === 'REVIEW_REQUIRED' && <div className="notice notice-review"><strong>Требуется проверка сторонами</strong><span>Автоматическое продолжение закрыто. Причины и активный запрос отмены показаны ниже; истечение срока само по себе не освобождает средства.</span></div>}
       <div className="deal-detail-grid"><section className="panel deal-conditions"><h3>Условия сделки</h3><div className="deal-condition-amount"><span>Полная сумма</span><strong>{formatRubles(deal.amount_kopecks)}</strong></div><dl className="deal-facts"><div><dt>Валюта</dt><dd>Российский рубль · RUB</dd></div><div><dt>Срок сделки</dt><dd>{dateLabel(deal.deadline_at)}<small>{Intl.DateTimeFormat().resolvedOptions().timeZone}</small></dd></div><div><dt>Создана</dt><dd>{dateLabel(deal.created_at)}</dd></div></dl><h3 className="deal-description-heading">Условия и результат работы</h3><p className="deal-description">{deal.description}</p></section>
         <section className="panel deal-parties"><h3>Участники</h3>{([{ label: 'Заказчик', party: deal.customer }, { label: 'Исполнитель', party: deal.supplier }]).map(({ label, party }) => <div className="deal-party" key={label}><span>{label}{party.id === ownId && <span className="mini-tag">Ваша организация</span>}</span><strong>{party.name}</strong><small>{party.kind === 'IP' ? 'Индивидуальный предприниматель' : 'Компания'}</small><code>{party.id}</code></div>)}<p className="field-help">Роль определяется для каждой сделки отдельно.</p></section></div>
       <DealAgreement deal={deal} ownId={ownId} onDeal={setDeal} onUnauthorized={onUnauthorized} />

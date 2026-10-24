@@ -41,17 +41,18 @@ async function registerSynthetic(client: APIRequestContext) {
 async function laboratory(playwright: PlaywrightWorkerArgs['playwright']) {
   const customer = await playwright.request.newContext({ baseURL: API_BASE_URL, storageState: { cookies: [], origins: [] } });
   const operator = await apiFor(playwright, 'operator');
-  const supplier = await apiFor(playwright, 'supplier');
+  const supplier = await playwright.request.newContext({ baseURL: API_BASE_URL, storageState: { cookies: [], origins: [] } });
   const outsider = await apiFor(playwright, 'outsider');
   const clients = [customer, operator, supplier, outsider];
   try {
     const identity = await registerSynthetic(customer);
+    const supplierIdentity = await registerSynthetic(supplier);
     const initial = await account(customer);
     expect(initial).toMatchObject({ total_kopecks: '0', reserved_kopecks: '0', available_kopecks: '0' });
     await ok(await command(operator, `/api/v1/demo/accounts/${initial.id}/credits`, {
       amount_kopecks: '100000', reason: 'Изолированный API-тест подписей на учебных средствах',
     }), 201);
-    return { customer, operator, supplier, outsider, identity, close: () => Promise.all(clients.map(client => client.dispose())) };
+    return { customer, operator, supplier, outsider, identity, supplierIdentity, close: () => Promise.all(clients.map(client => client.dispose())) };
   } catch (failure) { await Promise.all(clients.map(client => client.dispose())); throw failure; }
 }
 type Lab = Awaited<ReturnType<typeof laboratory>>;
@@ -64,7 +65,7 @@ const body = (deal: DocumentDeal): DocumentBinding => ({
 const sign = (client: APIRequestContext, deal: DocumentDeal, key = randomUUID(), data: unknown = body(deal)) =>
   command(client, `/api/v1/documents/${deal.document.id}/sign`, data, key);
 async function generated(lab: Lab, deadline?: string) {
-  const draft = await ok(await postDraft(lab.customer, draftInput({ amount_kopecks: '30000', ...(deadline ? { deadline_at: deadline } : {}) })), 201);
+  const draft = await ok(await postDraft(lab.customer, draftInput({ supplier_party_id: lab.supplierIdentity.organisation.id, amount_kopecks: '30000', ...(deadline ? { deadline_at: deadline } : {}) })), 201);
   return (await ok(await command(lab.customer, `/api/v1/deals/${draft.id}/documents/generate`, {
     expected_deal_version: draft.deal_version, template_id: 'printing-acceptance-v1',
   }), 201)).deal;
@@ -79,6 +80,15 @@ async function fund(lab: Lab, deal: DocumentDeal) {
 }
 async function funded(lab: Lab) { return fund(lab, await agree(lab, await generated(lab))); }
 async function balances(lab: Lab) { return Promise.all([account(lab.customer), account(lab.supplier)]); }
+async function settled(lab: Lab, deal: DocumentDeal, before: any[]) {
+  await expect.poll(async () => (await read(lab.customer, deal.id)).status, { timeout: 20_000, intervals: [100, 250, 500] }).toBe('SETTLED');
+  const current = await read(lab.customer, deal.id);
+  expect(current).toMatchObject({ deal_version: deal.deal_version, reserve: { status: 'CONSUMED', amount_kopecks: '30000' }, payment_id: expect.any(String) });
+  const after = await balances(lab);
+  expect(after[0]).toEqual({ ...before[0], total_kopecks: (BigInt(before[0].total_kopecks) - 30000n).toString(), reserved_kopecks: (BigInt(before[0].reserved_kopecks) - 30000n).toString() });
+  expect(after[1]).toEqual({ ...before[1], total_kopecks: (BigInt(before[1].total_kopecks) + 30000n).toString(), available_kopecks: (BigInt(before[1].available_kopecks) + 30000n).toString() });
+  return current;
+}
 function bound(signature: Signature, deal: DocumentDeal, organisationID: string, userID: string) {
   expect(signature).toEqual({
     id: expect.any(String), organisation_id: organisationID, user_id: userID,
@@ -87,12 +97,12 @@ function bound(signature: Signature, deal: DocumentDeal, organisationID: string,
   expect(Number.isFinite(Date.parse(signature.created_at))).toBe(true);
 }
 
-test('two exact signatures by the distinct parties retain the reserve and never transfer any money', async ({ playwright, actors }) => {
+test('two exact party signatures publish READY before the verified EDO delivery consumes the reserve once', async ({ playwright, actors }) => {
   const lab = await laboratory(playwright);
   try {
     const deal = await funded(lab), before = await balances(lab);
     const first = await ok(await sign(lab.supplier, deal), 201);
-    bound(first.signature, deal, actors.supplier.organisation!.id, actors.supplier.user.id);
+    bound(first.signature, deal, lab.supplierIdentity.organisation.id, lab.supplierIdentity.user.id);
     expect(first.deal).toMatchObject({
       id: deal.id, deal_version: deal.deal_version, status: 'FUNDED', document: deal.document,
       reserve: deal.reserve, agreements: deal.agreements, payment_id: null, signatures: [first.signature],
@@ -104,11 +114,11 @@ test('two exact signatures by the distinct parties retain the reserve and never 
     expect(second.deal).toMatchObject({ status: 'READY_TO_SETTLE', deal_version: deal.deal_version, reserve: deal.reserve, payment_id: null });
     expect(second.deal.signatures).toHaveLength(2);
     expect(second.deal.signatures).toEqual(expect.arrayContaining([first.signature, second.signature]));
-    expect(await read(lab.supplier, deal.id)).toEqual(second.deal);
-    expect(await balances(lab)).toEqual(before);
-    const list = await ok(await lab.customer.get('/api/v1/deals', { params: { status: 'READY_TO_SETTLE', q: deal.id } }));
+    const current = await settled(lab, deal, before);
+    expect(current.signatures).toEqual(second.deal.signatures);
+    const list = await ok(await lab.customer.get('/api/v1/deals', { params: { status: 'SETTLED', q: deal.id } }));
     expect(list.items).toHaveLength(1);
-    expect(list.items[0]).toEqual(second.deal);
+    expect(list.items[0]).toEqual(current);
     await error(await command(lab.customer, `/api/v1/deals/${deal.id}/rework`, { deal_version: deal.deal_version, reason: 'Подписи не открывают редактирование' }), 409, 'INVALID_STATE');
     await error(await command(lab.customer, `/api/v1/deals/${deal.id}/documents/generate`, { expected_deal_version: deal.deal_version, template_id: 'printing-acceptance-v1' }), 409, 'INVALID_STATE');
   } finally { await lab.close(); }
@@ -126,12 +136,12 @@ test('same-key signature replay retains its historical response while a new key 
     expect(replay.status()).toBe(201);
     expect(await replay.body()).toEqual(bytes);
     expect((await replay.json()).deal.status).toBe('FUNDED');
+    const current = await settled(lab, deal, before);
     const newKey = await ok(await sign(lab.customer, deal), 201);
     expect(newKey.signature).toEqual(original.signature);
-    expect(newKey.deal).toEqual(second.deal);
+    expect(newKey.deal).toEqual(current);
     expect(newKey.deal.signatures).toHaveLength(2);
-    expect(await read(lab.customer, deal.id)).toEqual(second.deal);
-    expect(await balances(lab)).toEqual(before);
+    expect(await read(lab.customer, deal.id)).toEqual(current);
   } finally { await lab.close(); }
 });
 
@@ -150,12 +160,10 @@ test('concurrent keys from one party and simultaneous signatures from both parti
     const commands = await Promise.all(Array.from({ length: 6 }, (_, index) => sign(index % 2 ? lab.supplier : lab.customer, deal)));
     const outcomes = [];
     for (const response of commands) outcomes.push(await ok(response, 201));
-    const current = await read(lab.customer, deal.id);
-    expect(current).toMatchObject({ status: 'READY_TO_SETTLE', reserve: deal.reserve, payment_id: null });
+    const current = await settled(lab, deal, before);
     expect(current.signatures).toHaveLength(2);
     expect(new Set(current.signatures.map((signature: Signature) => signature.organisation_id)).size).toBe(2);
     expect(new Set(outcomes.map(outcome => outcome.signature.id)).size).toBe(2);
-    expect(await balances(lab)).toEqual(before);
   } finally { await lab.close(); }
 });
 
@@ -172,11 +180,9 @@ test('two first signatures racing on an unsigned funded deal both survive withou
     const results = [];
     for (const response of responses) results.push(await ok(response, 201));
     expect(results.map(result => result.deal.status).sort()).toEqual(['FUNDED', 'READY_TO_SETTLE']);
-    const current = await read(lab.customer, deal.id);
-    expect(current).toMatchObject({ status: 'READY_TO_SETTLE', deal_version: deal.deal_version, reserve: deal.reserve, payment_id: null });
+    const current = await settled(lab, deal, before);
     expect(current.signatures).toHaveLength(2);
     expect(current.signatures).toEqual(expect.arrayContaining(results.map(result => result.signature)));
-    expect(await balances(lab)).toEqual(before);
   } finally { await lab.close(); }
 });
 
@@ -268,9 +274,9 @@ test('a new HTTP client recovers the original persisted signature response and l
     expect(replay.status()).toBe(201);
     expect(await replay.body()).toEqual(bytes);
     expect((await replay.json()).signature).toEqual(result.signature);
-    expect(await read(reconnected, deal.id)).toEqual(completed.deal);
-    expect(completed.deal.signatures).toHaveLength(2);
-    expect(await balances(lab)).toEqual(before);
+    const current = await settled(lab, deal, before);
+    expect(await read(reconnected, deal.id)).toEqual(current);
+    expect(current.signatures).toEqual(completed.deal.signatures);
   } finally { await reconnected?.dispose(); await lab.close(); }
 });
 
