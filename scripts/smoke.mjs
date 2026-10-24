@@ -74,6 +74,20 @@ async function waitDelivery(client, eventID) {
   throw new Error('EDO job did not reach a durable result');
 }
 
+async function history(client, dealID) {
+  const path = '/api/v1/deals/' + dealID + '/audit';
+  const { json: page } = await client.request(path + '?limit=100');
+  assert.equal(page.next_cursor, null, 'Smoke history fits one complete page');
+  const { json: exported, response } = await client.request(path + '/export?format=json');
+  assert.match(response.headers.get('content-disposition'), /^attachment;/);
+  assert.deepEqual(exported.items, page.items, 'JSON and read use the same safe event projection');
+  assert.equal(new Set(page.items.map(item => item.id)).size, page.items.length);
+  assert.equal(page.items.filter(item => item.type === 'DEAL_SETTLED').length, 1);
+  assert.equal(page.items.filter(item => item.type === 'DOCUMENT_SIGNED').length, 2);
+  assert.equal(page.items.find(item => item.type === 'DEAL_SETTLED').actor_source, 'edo-emulator');
+  return page.items;
+}
+
 async function ready() {
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
@@ -168,7 +182,7 @@ const stateFile = process.env.SMOKE_STATE_FILE;
 let previousState;
 if (stateFile && existsSync(stateFile)) {
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
-  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3', 'poaktu-edo-settlement-smoke-v4'].includes(saved.kind));
+  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3', 'poaktu-edo-settlement-smoke-v4', 'poaktu-deal-history-smoke-v5'].includes(saved.kind));
   previousState = saved;
   const { json: persisted } = await customer.request('/api/v1/deals/' + encodeURIComponent(saved.id));
   assert.equal(persisted.title, saved.body.title);
@@ -237,6 +251,7 @@ if (stateFile && existsSync(stateFile)) {
     }
     const { json: afterReplay } = await previousCustomer.request('/api/v1/organisations/me');
     assert.deepEqual(afterReplay.account, account.account);
+    if (m.history) assert.deepEqual(await history(previousCustomer, card.id), m.history, 'Restart and command replay preserve exact immutable history');
     await previousCustomer.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
     if (m.settlement) await previousSupplier.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
   }
@@ -402,10 +417,11 @@ assert.deepEqual(seedAfter.account, customerAccount.account, 'This smoke does no
 const signatures = { input: signatureInput, customer_key: customerSignatureKey, supplier_key: supplierSignatureKey, first_result: firstSignature, second_result: secondSignature };
 const settlement = { payment_id: signedCard.payment_id, supplier_email: moneySupplierEmail, supplier_account: moneySupplierAfter.account,
   event_key: eventKey, event_result: eventResult, delivery_result: deliveryResult };
-const moneyState = { signatures, settlement, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey,
+const moneyHistory = await history(unauthenticated, moneyDraft.id);
+const moneyState = { history: moneyHistory, signatures, settlement, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey,
   reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
-if (stateFile && !previousState?.money?.settlement) {
-  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-edo-settlement-smoke-v4', money: moneyState };
+if (stateFile && !previousState?.money?.history) {
+  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-deal-history-smoke-v5', money: moneyState };
   writeFileSync(stateFile, JSON.stringify(saved), { flag: previousState ? 'w' : 'wx', mode: 0o600 });
 }
 
@@ -416,4 +432,4 @@ for (const client of [unauthenticated, customer, supplier, moneySupplier, operat
   await revoked.request('/api/v1/auth/me', { expected: 401 });
 }
 
-console.log('EDO settlement smoke passed: auth/CSRF, private PDF and exact signatures, reserved-fund payment with zero available, one settlement, source delivery/result, unchanged shared seed/supplier, historical command/inbox/delivery persistence after restart, server logout.');
+console.log('Deal history smoke passed: auth/CSRF, private PDF and exact signatures, reserved-fund payment with zero available, one settlement, source delivery/result, unchanged shared seed/supplier, safe history/export and historical command/inbox/delivery persistence after restart, server logout.');
