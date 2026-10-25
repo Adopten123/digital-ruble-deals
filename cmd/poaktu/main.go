@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adopten123/digital-ruble-deals/internal/core/config"
 	"github.com/Adopten123/digital-ruble-deals/internal/core/documentfile"
+	"github.com/Adopten123/digital-ruble-deals/internal/core/integritylock"
 	corepg "github.com/Adopten123/digital-ruble-deals/internal/core/repository/postgres"
 	"github.com/Adopten123/digital-ruble-deals/internal/core/security"
 	httpapi "github.com/Adopten123/digital-ruble-deals/internal/core/transport/http"
@@ -46,6 +47,9 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger, os.Args[1:]); err != nil {
+		if code, ok := err.(interface{ ExitCode() int }); ok {
+			os.Exit(code.ExitCode())
+		}
 		logger.Error("command failed", "error", err.Error())
 		os.Exit(1)
 	}
@@ -56,6 +60,9 @@ func run(logger *slog.Logger, args []string) error {
 		command = args[0]
 		args = args[1:]
 	}
+	if command == "integrity" {
+		return runIntegrity(logger, args)
+	}
 	if command == "healthcheck" {
 		return healthcheck(args)
 	}
@@ -63,7 +70,7 @@ func run(logger *slog.Logger, args []string) error {
 		return errors.New("unexpected command arguments")
 	}
 	if command != "serve" && command != "migrate" && command != "bootstrap" {
-		return errors.New("usage: poaktu [serve|migrate|bootstrap|healthcheck]")
+		return errors.New("usage: poaktu [serve|migrate|bootstrap|healthcheck|integrity]")
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -89,6 +96,13 @@ func run(logger *slog.Logger, args []string) error {
 	connectCancel()
 	if err != nil {
 		return errors.New("PostgreSQL is unavailable")
+	}
+	if command != "serve" {
+		release, err := integritylock.HoldShared(ctx, pool)
+		if err != nil {
+			return errors.New("integrity snapshot is in progress")
+		}
+		defer release()
 	}
 	switch command {
 	case "migrate":
@@ -118,6 +132,11 @@ func safeCommandError(operation string, err error) error {
 }
 
 func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pgxpool.Pool) error {
+	release, err := integritylock.HoldShared(ctx, pool)
+	if err != nil {
+		return errors.New("integrity snapshot is in progress")
+	}
+	defer release()
 	key, err := security.LoadKey(cfg.KeyFile)
 	if err != nil {
 		return errors.New("persistent app key is missing or invalid; run bootstrap")
@@ -167,7 +186,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config.Config, pool *pg
 			httpapi.Error(w, r, 503, "TEMPORARILY_UNAVAILABLE", "База, схема или демоданные не готовы")
 			return
 		}
-		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "notifications"})
+		httpapi.JSON(w, 200, map[string]string{"status": "ready", "contour": "test", "stage": "audit_integrity"})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.Error(w, r, 404, "RESOURCE_NOT_FOUND", "Ресурс не найден")
