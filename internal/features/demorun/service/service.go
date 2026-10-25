@@ -25,6 +25,7 @@ var ErrConflict = errors.New("demo run id already has different inputs")
 var ErrChanged = errors.New("demo seed facts changed")
 var ErrOwnerRequired = errors.New("database owner required")
 var ErrIncomplete = errors.New("demo drafts incomplete; retry the same run")
+var ErrExpired = errors.New("incomplete demo seed deadline expired")
 var slug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,39}$`)
 
 func ValidRunID(id string) bool { return slug.MatchString(id) }
@@ -154,6 +155,19 @@ func (s *Service) Create(ctx context.Context, run, password string) (Manifest, e
 			return Manifest{}, errors.Join(ErrIncomplete, err)
 		}
 		if result.Status != 201 {
+			var refusal struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(result.Body, &refusal) == nil {
+				if refusal.Error.Code == "DEADLINE_PASSED" {
+					return Manifest{}, ErrExpired
+				}
+				if refusal.Error.Code == "IDEMPOTENCY_CONFLICT" {
+					return Manifest{}, ErrChanged
+				}
+			}
 			return Manifest{}, ErrIncomplete
 		}
 		var d deals.Deal

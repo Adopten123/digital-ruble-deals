@@ -103,8 +103,10 @@ func runDemo(_ *slog.Logger, args []string) error {
 		return demoFailure("OWNER_REQUIRED", "Подготовку запускает владелец учебной БД; runtime-доступ для неё не подходит.", run, 3)
 	case errors.Is(err, demo.ErrConflict):
 		return demoFailure("RUN_CONFLICT", "Этот ID уже связан с другими входными данными или занятой учёткой. Прежние данные сохранены.", run, 2)
+	case errors.Is(err, demo.ErrExpired):
+		return demoFailure("RUN_EXPIRED", "Срок незавершённой подготовки истёк. Для свежего показа выберите новый run-id; прежние учётки, средства и история сохраняются.", run, 2)
 	case errors.Is(err, demo.ErrChanged):
-		return demoFailure("RUN_CHANGED", "Исходные учебные учётки или проводка изменены. Автоматический сброс не выполняется; проверьте данные.", run, 3)
+		return demoFailure("RUN_CHANGED", "Исходные учётки, проводка или параметры черновиков изменены. Автоматический сброс не выполняется; проверьте данные.", run, 3)
 	case err != nil:
 		return demoFailure("INCOMPLETE", "Подготовка не завершена. Повторите тот же run-id с прежним файлом пароля и ключом приложения.", run, 3)
 	}
