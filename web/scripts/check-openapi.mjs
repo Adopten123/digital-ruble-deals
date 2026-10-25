@@ -13,6 +13,12 @@ function inspect(value) {
 inspect(spec);
 await SwaggerParser.validate(structuredClone(spec), { resolve: { external: false } });
 const documented = Object.entries(spec.paths).flatMap(([path, methods]) => Object.keys(methods).map(method => `${method.toUpperCase()} ${path}`)).sort();
+// The human reference must list every implemented operation, too. A valid
+// OpenAPI alone cannot catch stale/missing rows in the Markdown guide.
+const reference = await readFile(new URL('docs/api/README.md', root), 'utf8');
+const referenceOperations = [...reference.matchAll(/^\|\s*(GET|POST|PATCH|PUT|DELETE|HEAD|OPTIONS|TRACE)\s*\|\s*`([^`]+)`\s*\|/gm)]
+  .map(match => `${match[1]} ${match[2]}`).sort();
+assert.deepEqual(referenceOperations, documented, 'API reference table must match every OpenAPI operation without duplicates');
 const registered = [];
 async function goFiles(directory) {
   const entries = await readdir(new URL(directory, root), { withFileTypes: true });
@@ -29,3 +35,4 @@ const ids = Object.values(spec.paths).flatMap(methods => Object.values(methods).
 assert.equal(new Set(ids).size, ids.length, 'operationId must be unique');
 assert.deepEqual(spec.servers.map(server => server.url), ['/'], 'Interactive requests must use the current origin');
 console.log(`OpenAPI valid: ${documented.length} operations match Go routes; all references are local.`);
+console.log(`API reference valid: ${referenceOperations.length} table rows match OpenAPI.`);

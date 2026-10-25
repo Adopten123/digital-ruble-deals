@@ -94,7 +94,12 @@ Swagger не включает автоповторы, не сохраняет а
 | POST | `/api/v1/demo/accounts/{id}/debits` | 201 `{transaction_id,account}` | Только оператор; available на фиксированный системный счёт |
 | POST | `/api/v1/demo/edo/events` | 202 `{job_id,event_id}` | Только оператор; фиксированный шаблон, CSRF / Idempotency-Key |
 | GET | `/api/v1/demo/edo/events/{event_id}` | 200 EDODelivery | Только оператор; последняя доставка этого ID, без query / секретов |
-| POST | `/internal/edo/events` | 200 EDOResult | Только подтверждённый HMAC-источник; отдельно от браузерных 31 операции |
+| GET | `/api/v1/deals/{id}/audit` | 200 AuditPage | Текущий участник; безопасная история доступных ему версий сделки |
+| GET | `/api/v1/deals/{id}/audit/export` | 200 AuditExport / CSV | Текущий участник; format=json или csv, до 5000 доступных событий |
+| GET | `/api/v1/demo/audit` | 200 AuditPage | Только оператор; безопасная проекция с фильтрами |
+| GET | `/api/v1/notifications` | 200 NotificationPage | Личные уведомления, signed cursor и общий unread_count |
+| POST | `/api/v1/notifications/{id}/read` | 204 без тела | Получатель; строго пустое тело, Origin / CSRF, без Idempotency-Key |
+| POST | `/internal/edo/events` | 200 EDOResult | Только подтверждённый HMAC-источник; отдельно от 36 операций браузерного контура |
 
 ### Регистрация и ответы сессии
 
@@ -288,7 +293,7 @@ curl --fail-with-body -sS -b cookies.txt -c cookies.txt -X POST \
 
 ## Устройство и сопровождение
 
-`cmd/poaktu/main.go` собирает handler/service/repository, приватное файловое хранилище и workers ЭДО / уведомлений с остановкой при завершении API; `cmd/poaktu/edo.go` закрепляет внутренний адрес за loopback / портом API. Общие HTTP / CSRF — `internal/core/transport/http`, PDF — `internal/core/documentfile`, предметные модули — `internal/features/{auth,organizations,deals,settlement,edo,audit,notifications}`. DTO / маршрут находятся в transport/http и service, правила — в service, транзакции / SQL — в repository/postgres. Хранение — [DATA_MODEL.md](../DATA_MODEL.md), фактические миграции — `migrations/001_foundation.sql` … `009_notifications.sql`, включая `007_deal_blockers.sql`. Ограниченной роли нужны оба файла прав: `deploy/postgres/runtime_grants.sql` и `deploy/postgres/edo_runtime_grants.sql`. Архитектурный контекст — [ARCHITECTURE.md](../ARCHITECTURE.md).
+`cmd/poaktu/main.go` собирает handler/service/repository, приватное файловое хранилище и workers ЭДО / уведомлений с остановкой при завершении API; `cmd/poaktu/edo.go` закрепляет внутренний адрес за loopback / портом API. Общие HTTP / CSRF — `internal/core/transport/http`, PDF — `internal/core/documentfile`, модули — `internal/features/{auth,organizations,deals,settlement,edo,audit,notifications,bootstrap,integrity,demorun}`. `integrity` обслуживает независимый CLI A19, `demorun` — owner-only CLI подготовки показа; дополнительных HTTP-операций они не создают. DTO / маршрут находятся в transport/http и service, правила — в service, транзакции / SQL — в repository/postgres. Хранение — [DATA_MODEL.md](../DATA_MODEL.md), фактические миграции — `migrations/001_foundation.sql` … `010_audit_integrity.sql`, включая `007_deal_blockers.sql` и `009_notifications.sql`. Ограниченной роли нужны оба файла прав: `deploy/postgres/runtime_grants.sql` и `deploy/postgres/edo_runtime_grants.sql`. Архитектурный контекст — [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 При изменении публичного API одновременно обновлять handler/service, OpenAPI, этот справочник, TypeScript-типы / клиент и проверки. `npm --prefix web run docs:check` проверяет OpenAPI и полное совпадение операций с зарегистрированными Go-маршрутами; это не доказательство всех бизнес-правил. `npm --prefix web run docs:prepare` копирует локальные assets. Сценарии, реальные проверки и границы покрытия — [TESTING.md](../TESTING.md).
 

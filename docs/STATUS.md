@@ -12,6 +12,8 @@
 
 Пользователь выбрал Windows + Docker Desktop для второго ПК. [Чек-лист](SECOND_PC_WINDOWS.md) подготовлен; фактические WIN01–WIN10 пока NOT RUN. Для сохранности прежних данных используется отдельный Compose project.
 
+Таблица API-справочника дополнена пятью уже существовавшими операциями до 37/37; docs:check теперь сверяет Go / OpenAPI / Markdown. Намеренно пропущенный маршрут отклонён, документ восстановлен побайтно, итоговая проверка успешна.
+
 PR #19 объединён в main `aeade9e`, все шесть исходных коммитов сохранены. Оба финальных CI прошли: [PR](https://github.com/Adopten123/digital-ruble-deals/actions/runs/40213505798), [push](https://github.com/Adopten123/digital-ruble-deals/actions/runs/40213501478), включая 148 E2E и независимый CLI smoke. [Post-merge main CI](https://github.com/Adopten123/digital-ruble-deals/actions/runs/40214676860) тоже success. Следующий открытый этап — второй пользовательский ПК и ручные матрицы устройств / zoom.
 
 ### Предыдущий этап — A19
