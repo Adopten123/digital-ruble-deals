@@ -26,9 +26,9 @@ function Failure({ error, retry }: { error: unknown; retry?: () => void }) {
 }
 function Busy({ children }: { children: string }) { return <div className="loading" role="status"><span className="spinner" aria-hidden="true" />{children}</div>; }
 
-export default function Deals({ organisation, userId, onUnauthorized }: ScopeProps & { organisation: Organisation; userId: string }) {
-  const [view, setView] = useState<'list' | 'create' | 'detail'>('list');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export default function Deals({ organisation, userId, initialDealId, onUnauthorized }: ScopeProps & { organisation: Organisation; userId: string; initialDealId?: string }) {
+  const [view, setView] = useState<'list' | 'create' | 'detail'>(initialDealId ? 'detail' : 'list');
+  const [selectedId, setSelectedId] = useState<string | null>(initialDealId ?? null);
   const [revision, setRevision] = useState(0);
   const [created, setCreated] = useState(false);
   const [pending, setPending] = useState<PendingDealAttempt | null>(null);

@@ -29,3 +29,9 @@ GRANT INSERT (id, event_id, type, deal_id, payload, created_at) ON outbox TO poa
 -- Balance projections and two-entry operator movements are guarded by deferred
 -- aggregate/direction constraints; no DDL, bootstrap or operator creation.
 -- Extend these explicit permissions together with later features and their tests.
+
+-- Durable application inbox. Source and recipient identity stay immutable;
+-- guards allow only the first read time and first notification processing time.
+GRANT INSERT(id,event_id,recipient_user_id,recipient_organization_id,semantic_key) ON notifications TO poaktu_runtime;
+GRANT UPDATE(read_at) ON notifications TO poaktu_runtime;
+GRANT UPDATE(delivered_at) ON outbox TO poaktu_runtime;

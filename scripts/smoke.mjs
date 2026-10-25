@@ -88,6 +88,43 @@ async function history(client, dealID) {
   return page.items;
 }
 
+const notifiedTypes = new Set(['DEAL_CREATED', 'AGREE_DEAL', 'DEAL_REWORKED', 'DEAL_RESERVED', 'DOCUMENT_SIGNED', 'DEAL_SETTLED', 'DISPUTE_OPENED', 'CANCELLATION_REQUESTED', 'CANCELLATION_ACCEPTED', 'CANCELLATION_REJECTED']);
+async function deliveredNotifications(client, dealID, events) {
+  const expected = events.filter(event => notifiedTypes.has(event.type));
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const { json: page } = await client.request('/api/v1/notifications?limit=100');
+    assert.equal(page.next_cursor, null, 'Fresh smoke recipient fits one complete page');
+    const ownDeal = page.items.filter(item => item.event.deal_id === dealID);
+    if (ownDeal.length < expected.length) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      continue;
+    }
+    assert.equal(new Set(page.items.map(item => item.id)).size, page.items.length);
+    assert.equal(new Set(page.items.map(item => item.event.id)).size, page.items.length);
+    assert.deepEqual(ownDeal.map(item => item.event).sort((a,b) => a.id.localeCompare(b.id)),
+      [...expected].sort((a,b) => a.id.localeCompare(b.id)), 'Notifications reuse exact saved safe facts, without technical jobs');
+    assert.equal(page.unread_count, page.items.filter(item => item.read_at === null).length);
+    return page;
+  }
+  throw new Error('Committed notifications did not reach the recipient');
+}
+async function persistNotificationRead(client, page) {
+  const notification = page.items.find(item => item.event.type === 'DEAL_SETTLED');
+  assert(notification, 'Settlement delivered exactly once');
+  await client.request('/api/v1/notifications/' + notification.id + '/read', { method: 'POST', expected: 204 });
+  const first = (await client.request('/api/v1/notifications?limit=100')).json;
+  assert.equal(first.unread_count, page.unread_count - 1);
+  const marked = first.items.find(item => item.id === notification.id);
+  assert.match(marked.read_at, /Z$/);
+  await client.request('/api/v1/notifications/' + notification.id + '/read', { method: 'POST', expected: 204 });
+  const repeated = (await client.request('/api/v1/notifications?limit=100')).json;
+  assert.deepEqual(repeated, first, 'Repeated read preserves original timestamp and count');
+  const read = (await client.request('/api/v1/notifications?unread=false&limit=100')).json;
+  assert.deepEqual(read.items, [marked]);
+  assert.equal(read.unread_count, first.unread_count, 'Count is independent of read-page filter');
+  return first;
+}
+
 async function ready() {
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
@@ -95,7 +132,7 @@ async function ready() {
       if (response.status === 200) {
         const body = await response.json();
         assert.equal(body.contour, 'test');
-        assert.equal(body.stage, 'edo_settlement');
+        assert.equal(body.stage, 'notifications');
         return;
       }
     } catch (error) {
@@ -103,7 +140,7 @@ async function ready() {
     }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  throw new Error('EDO settlement API did not become ready');
+  throw new Error('Notifications API did not become ready');
 }
 
 await ready();
@@ -182,7 +219,7 @@ const stateFile = process.env.SMOKE_STATE_FILE;
 let previousState;
 if (stateFile && existsSync(stateFile)) {
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));
-  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3', 'poaktu-edo-settlement-smoke-v4', 'poaktu-deal-history-smoke-v5'].includes(saved.kind));
+  assert(['poaktu-deal-drafts-smoke-v1', 'poaktu-deal-reserves-smoke-v2', 'poaktu-test-signatures-smoke-v3', 'poaktu-edo-settlement-smoke-v4', 'poaktu-deal-history-smoke-v5', 'poaktu-notifications-smoke-v6'].includes(saved.kind));
   previousState = saved;
   const { json: persisted } = await customer.request('/api/v1/deals/' + encodeURIComponent(saved.id));
   assert.equal(persisted.title, saved.body.title);
@@ -252,6 +289,12 @@ if (stateFile && existsSync(stateFile)) {
     const { json: afterReplay } = await previousCustomer.request('/api/v1/organisations/me');
     assert.deepEqual(afterReplay.account, account.account);
     if (m.history) assert.deepEqual(await history(previousCustomer, card.id), m.history, 'Restart and command replay preserve exact immutable history');
+    if (m.notifications) {
+      assert.deepEqual(await deliveredNotifications(previousCustomer, card.id, m.history), m.notifications.customer,
+        'Restart and historical command replay preserve exact notification IDs, facts, counts and read times');
+      assert.deepEqual(await deliveredNotifications(previousSupplier, card.id, m.history), m.notifications.supplier);
+      await previousCustomer.request('/api/v1/notifications/' + m.notifications.supplier.items[0].id + '/read', { method: 'POST', expected: 404 });
+    }
     await previousCustomer.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
     if (m.settlement) await previousSupplier.request('/api/v1/auth/logout', { method: 'POST', expected: 204 });
   }
@@ -418,10 +461,19 @@ const signatures = { input: signatureInput, customer_key: customerSignatureKey, 
 const settlement = { payment_id: signedCard.payment_id, supplier_email: moneySupplierEmail, supplier_account: moneySupplierAfter.account,
   event_key: eventKey, event_result: eventResult, delivery_result: deliveryResult };
 const moneyHistory = await history(unauthenticated, moneyDraft.id);
-const moneyState = { history: moneyHistory, signatures, settlement, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey,
+const customerNotifications = await deliveredNotifications(unauthenticated, moneyDraft.id, moneyHistory);
+assert.equal(customerNotifications.items.filter(item => item.event.type === 'DEMO_CREDITED').length, 1);
+assert.equal(customerNotifications.items.filter(item => item.event.type === 'DEMO_DEBITED').length, 1);
+const supplierNotifications = await deliveredNotifications(moneySupplier, moneyDraft.id, moneyHistory);
+assert.equal(supplierNotifications.items.every(item => item.event.deal_id === moneyDraft.id), true);
+const readNotifications = await persistNotificationRead(unauthenticated, customerNotifications);
+const notifications = { customer: readNotifications, supplier: supplierNotifications };
+const { json: operatorNotifications } = await operator.request('/api/v1/notifications');
+assert.deepEqual(operatorNotifications, { items: [], next_cursor: null, unread_count: 0 });
+const moneyState = { notifications, history: moneyHistory, signatures, settlement, email: registration.email, account_id: own.account.id, deal_id: moneyDraft.id, reserve_key: reserveKey,
   reserve_result: reserved, credit_key: creditKey, credit_transaction_id: credit.transaction_id, debit_key: debitKey, debit_transaction_id: debit.transaction_id };
-if (stateFile && !previousState?.money?.history) {
-  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-deal-history-smoke-v5', money: moneyState };
+if (stateFile && !previousState?.money?.notifications) {
+  const saved = { ...(previousState ?? { id: draft.id, key: dealKey, body: dealBody }), kind: 'poaktu-notifications-smoke-v6', money: moneyState };
   writeFileSync(stateFile, JSON.stringify(saved), { flag: previousState ? 'w' : 'wx', mode: 0o600 });
 }
 
@@ -432,4 +484,4 @@ for (const client of [unauthenticated, customer, supplier, moneySupplier, operat
   await revoked.request('/api/v1/auth/me', { expected: 401 });
 }
 
-console.log('Deal history smoke passed: auth/CSRF, private PDF and exact signatures, reserved-fund payment with zero available, one settlement, source delivery/result, unchanged shared seed/supplier, safe history/export and historical command/inbox/delivery persistence after restart, server logout.');
+console.log('Notifications smoke passed: auth/CSRF, private PDF and exact signatures, reserved-fund payment with zero available, one settlement, source delivery/result, unchanged shared seed/supplier, safe history/export, exact notification recipients/facts/read times without duplicates and historical command/inbox/delivery persistence after restart, server logout.');

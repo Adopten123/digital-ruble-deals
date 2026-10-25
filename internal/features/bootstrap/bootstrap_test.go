@@ -73,7 +73,7 @@ func TestBootstrapRestartAndLedgerConstraints(t *testing.T) {
 	}
 }
 
-func TestReadinessRequiresTheCurrentSettlementSchemaAndAllFeatureTables(t *testing.T) {
+func TestReadinessRequiresTheCurrentNotificationSchemaAndAllFeatureTables(t *testing.T) {
 	pool := testutil.Database(t)
 	ctx := context.Background()
 	if err := bootstrap.Run(ctx, pool); err != nil {
@@ -87,7 +87,7 @@ func TestReadinessRequiresTheCurrentSettlementSchemaAndAllFeatureTables(t *testi
 		t.Fatal(err)
 	}
 	if err := bootstrap.Ready(ctx, pool); err == nil {
-		t.Fatal("old migration markers allowed payment API readiness")
+		t.Fatal("old migration markers allowed notification API readiness")
 	}
 	if _, err := pool.Exec(ctx, "INSERT INTO schema_migrations(version,checksum) VALUES($1,$2)", corepg.SchemaVersion, checksum); err != nil {
 		t.Fatal(err)
@@ -99,6 +99,15 @@ func TestReadinessRequiresTheCurrentSettlementSchemaAndAllFeatureTables(t *testi
 		t.Fatal("missing delivery table allowed readiness")
 	}
 	if _, err := pool.Exec(ctx, "ALTER TABLE unavailable_edo_deliveries RENAME TO edo_deliveries"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE notifications RENAME TO unavailable_notifications"); err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Ready(ctx, pool); err == nil {
+		t.Fatal("missing notification table allowed readiness")
+	}
+	if _, err := pool.Exec(ctx, "ALTER TABLE unavailable_notifications RENAME TO notifications"); err != nil {
 		t.Fatal(err)
 	}
 	if err := bootstrap.Ready(ctx, pool); err != nil {

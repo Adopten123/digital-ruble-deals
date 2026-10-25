@@ -7,6 +7,8 @@ import Deals from './Deals';
 import DemoAccounts from './DemoAccounts';
 import DemoEDO from './DemoEDO';
 import AuditHistory from './AuditHistory';
+import Notifications from './Notifications';
+import useNotifications from './useNotifications';
 
 type Readiness = 'checking' | 'ready' | 'unavailable';
 
@@ -235,8 +237,10 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: Session) =
 }
 
 function Workspace({ session, onUnauthorized }: { session: Session; onUnauthorized: (error: unknown) => void }) {
-  const [tab, setTab] = useState<'account' | 'deals' | 'catalog' | 'demo' | 'edo' | 'audit'>('account');
+  const [tab, setTab] = useState<'account' | 'deals' | 'catalog' | 'demo' | 'edo' | 'audit' | 'notifications'>('account');
   const isOperator = session.user.system_role === 'DEMO_OPERATOR';
+  const [notificationDeal, setNotificationDeal] = useState<string | undefined>(undefined);
+  const inbox = useNotifications({ userId: session.user.id, enabled: Boolean(session.organisation) && !isOperator, active: tab === 'notifications', onUnauthorized });
   return <div className="workspace">
     <div className="workspace-heading">
       <div><div className="eyebrow">{session.organisation ? 'Кабинет организации' : 'Учебный оператор'}</div>
@@ -247,16 +251,18 @@ function Workspace({ session, onUnauthorized }: { session: Session; onUnauthoriz
     </div>
     <nav className="workspace-tabs" aria-label="Разделы кабинета">
       <button className={tab === 'account' ? 'active' : ''} aria-current={tab === 'account' ? 'page' : undefined} onClick={() => setTab('account')}>{session.organisation ? 'Мой счёт' : 'Обзор'}</button>
-      {session.organisation && <button className={tab === 'deals' ? 'active' : ''} aria-current={tab === 'deals' ? 'page' : undefined} onClick={() => setTab('deals')}>Сделки</button>}
+      {session.organisation && <button className={tab === 'deals' ? 'active' : ''} aria-current={tab === 'deals' ? 'page' : undefined} onClick={() => { setNotificationDeal(undefined); setTab('deals'); }}>Сделки</button>}
+      {session.organisation && !isOperator && <button className={tab === 'notifications' ? 'active' : ''} aria-label="Уведомления" aria-current={tab === 'notifications' ? 'page' : undefined} onClick={() => setTab('notifications')}>Уведомления{inbox.unreadCount != null && inbox.unreadCount > 0 && <span className="notification-badge" aria-hidden="true" title={`Непрочитанных: ${inbox.unreadCount}`}>{inbox.unreadCount}</span>}</button>}
       {isOperator && <button className={tab === 'demo' ? 'active' : ''} aria-current={tab === 'demo' ? 'page' : undefined} onClick={() => setTab('demo')}>Учебные счета</button>}
       {isOperator && <button className={tab === 'edo' ? 'active' : ''} aria-current={tab === 'edo' ? 'page' : undefined} onClick={() => setTab('edo')}>События ЭДО</button>}
       {isOperator && <button className={tab === 'audit' ? 'active' : ''} aria-current={tab === 'audit' ? 'page' : undefined} onClick={() => setTab('audit')}>Аудит</button>}
       <button className={tab === 'catalog' ? 'active' : ''} aria-current={tab === 'catalog' ? 'page' : undefined} onClick={() => setTab('catalog')}>Контрагенты</button>
     </nav>
-    {tab === 'audit' && isOperator ? <AuditHistory key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
+    {tab === 'notifications' && session.organisation && !isOperator ? <Notifications inbox={inbox} onOpenDeal={id => { setNotificationDeal(id); setTab('deals'); }} />
+      : tab === 'audit' && isOperator ? <AuditHistory key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
       : tab === 'edo' && isOperator ? <DemoEDO key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
       : tab === 'demo' && isOperator ? <DemoAccounts key={session.user.id} userId={session.user.id} onUnauthorized={onUnauthorized} />
-      : tab === 'deals' && session.organisation ? <Deals key={session.user.id} userId={session.user.id} organisation={session.organisation} onUnauthorized={onUnauthorized} />
+      : tab === 'deals' && session.organisation ? <Deals key={session.user.id} userId={session.user.id} initialDealId={notificationDeal} organisation={session.organisation} onUnauthorized={onUnauthorized} />
       : tab === 'catalog' ? <Catalog key={session.user.id} ownId={session.organisation?.id} onUnauthorized={onUnauthorized} />
       : session.organisation ? <Account key={session.user.id} session={session} onUnauthorized={onUnauthorized} />
         : <section className="panel operator-scope"><div className="section-icon" aria-hidden="true">↳</div><h2>Отдельный доступ оператора</h2>
