@@ -64,7 +64,7 @@ Swagger не включает автоповторы, не сохраняет а
 | Метод | Путь | Успех | Особенности |
 |---|---|---|---|
 | GET | `/healthz` | 200 `{status:"ok", contour:"test"}` | Только работоспособность процесса |
-| GET | `/readyz` | 200 `{status:"ready", contour:"test", stage:"notifications"}` | БД, миграция 009, таблицы этапа и bootstrap; 503 при неготовности |
+| GET | `/readyz` | 200 `{status:"ready", contour:"test", stage:"audit_integrity"}` | БД, миграция 010, таблицы этапа и bootstrap; 503 при неготовности |
 | GET | `/api/v1/auth/csrf` | 200 `{csrf_token}` | До входа и после смены сессии |
 | POST | `/api/v1/auth/register` | 201 Authenticated | USER, новая организация, ORG_OWNER, нулевой счёт |
 | POST | `/api/v1/auth/login` | 200 Authenticated | Ротация сессии, одинаковый 401 для неверных реквизитов |
