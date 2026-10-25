@@ -94,7 +94,7 @@ func runIntegrity(_ *slog.Logger, args []string) error {
 		public, err = readIntegrityPublic(publicPath)
 		if err == nil {
 			var raw []byte
-			raw, err = readIntegrityFile(checkpointPath, integrity.MaxCheckpointBytes)
+			raw, err = readRegularFile(checkpointPath, integrity.MaxCheckpointBytes)
 			if err == nil {
 				checkpoint, err = integrity.ParseCheckpoint(raw)
 			}
@@ -160,7 +160,7 @@ func runIntegrity(_ *slog.Logger, args []string) error {
 	return printIntegrity(report, code)
 }
 
-func readIntegrityFile(path string, limit int) ([]byte, error) {
+func readRegularFile(path string, limit int) ([]byte, error) {
 	if path == "" {
 		return nil, integrity.ErrInvalidCheckpoint
 	}
@@ -239,7 +239,7 @@ func generateIntegrityKeys(privatePath, publicPath string) (ed25519.PublicKey, e
 	return pub, nil
 }
 func readIntegrityPrivate(path string) (ed25519.PrivateKey, error) {
-	raw, err := readIntegrityFile(path, 8192)
+	raw, err := readRegularFile(path, 8192)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func readIntegrityPrivate(path string) (ed25519.PrivateKey, error) {
 	return key, nil
 }
 func readIntegrityPublic(path string) (ed25519.PublicKey, error) {
-	raw, err := readIntegrityFile(path, 8192)
+	raw, err := readRegularFile(path, 8192)
 	if err != nil {
 		return nil, err
 	}

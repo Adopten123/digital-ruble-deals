@@ -56,7 +56,7 @@ func TestIntegrityKeyFilesAreIndependentAndNeverOverwritten(t *testing.T) {
 	if _, err = readIntegrityPublic(public); err == nil {
 		t.Fatal("oversize accepted")
 	}
-	if _, err = readIntegrityFile(dir, 8192); err == nil {
+	if _, err = readRegularFile(dir, 8192); err == nil {
 		t.Fatal("directory accepted")
 	}
 }
