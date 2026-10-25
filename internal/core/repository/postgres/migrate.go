@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const SchemaVersion = "009_notifications.sql"
+const SchemaVersion = "010_audit_integrity.sql"
 
 func Migrate(ctx context.Context, uow UnitOfWork, dir string) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))

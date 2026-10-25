@@ -16,7 +16,10 @@ var blobKey = regexp.MustCompile(`^[0-9a-f]{32}\.pdf$`)
 // client. A blob is published atomically only after its contents are durable.
 // Database failures may leave unreachable blobs; deleting them after an unknown
 // transaction outcome could destroy a committed document, so Put never does so.
-type Store struct{ root *os.Root }
+type Store struct {
+	root     *os.Root
+	readOnly bool
+}
 
 func NewStore(directory string) (*Store, error) {
 	if directory == "" {
@@ -50,6 +53,9 @@ func randomID() (string, error) {
 }
 
 func (s *Store) Put(data []byte) (key string, err error) {
+	if s.readOnly {
+		return "", errors.New("document store is read-only")
+	}
 	if err = Validate(data); err != nil {
 		return "", err
 	}

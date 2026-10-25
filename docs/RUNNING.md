@@ -157,3 +157,19 @@ Worker входит в процесс API. Он обращается к собс
 Участник видит вкладку «Уведомления» и счётчик, фильтры «Всё / Непрочитанные / Прочитанные», постраничную ленту, отметку и переход к защищённой карточке. Polling проверяет доставки каждые 15 секунд и при возвращении фокуса; при logout / смене аккаунта старые запросы отменяются. Оператор клиентскую вкладку не получает. Почта / SMS / мессенджеры не используются. Права, получатели, исключённые события и HTTP — в [NOTIFICATIONS.md](NOTIFICATIONS.md).
 
 Smoke v6 проверяет сохранённые доставки обеих сторон и первоначальную отметку прочтения до / после restart; его состояние не содержит cookies / паролей. На этапе выполнены 71 frontend unit, typecheck приложения / E2E, build и focused-набор уведомлений 17 API / UI / setup PASS. Итог общего набора и ручного прогона обновляется в [STATUS.md](STATUS.md); исторические прогоны выше не заменяют проверку новой схемы.
+
+## Обновление 009→010 и независимый CLI
+
+Сначала остановить API, сохранить резервную копию учебной БД / PDF, применить обычные migrate / access / bootstrap, затем запустить API. Существующие миграции / volumes не менять и не удалять. 010 добавляет боковую цепочку и не переписывает audit_events; старый префикс отмечен legacy_count. Readiness stage=audit_integrity означает установленную схему.
+
+Проверка A19 требует независимого каталога эталонов и остановленного API / workers. [INTEGRITY.md](INTEGRITY.md) описывает доверие, последние отпечатки, вывод и ограничения. Для Compose есть дополнительный compose.integrity.yaml: verifier использует runtime SELECT, PDF-монтирование только для чтения и отдельный каталог /reference. Этот каталог не монтируется в serve. Задайте POAKTU_REFERENCE_DIR абсолютным путём; каталог заранее создаёт хранитель с доступом для UID 10001 контейнера (на Linux права 0700). Каталог / ключи не добавлять в Git. Пример команд после завершения очередей:
+
+```sh
+docker compose stop api
+docker compose -f compose.yaml -f compose.integrity.yaml run --rm --no-deps verifier keygen --private-key /reference/signer.pem --public-key /reference/trusted-public.pem
+docker compose -f compose.yaml -f compose.integrity.yaml run --rm --no-deps verifier checkpoint --private-key /reference/signer.pem --out /reference/checkpoint-001.json --acknowledge-current-state
+docker compose -f compose.yaml -f compose.integrity.yaml run --rm --no-deps verifier verify --checkpoint /reference/checkpoint-001.json --public-key /reference/trusted-public.pem --checkpoint-sha256 <независимо_закреплённый_отпечаток>
+docker compose up -d --wait api
+```
+
+Непустая очередь / недоступный PDF не позволяют принять эталон. Не исправляйте их ручным ACK: возобновите штатные workers и выясните причину. Старый файл не перезаписывается. Все файлы на одном доступном администратору хосте — учебная демонстрация, а не независимое хранение. Для практической границы ключ / последний отпечаток должны контролироваться отдельно.

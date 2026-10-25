@@ -1,0 +1,18 @@
+# Optional CLI container. The reference directory is never mounted into serve.
+services:
+  verifier:
+    image: poaktu-api:foundation
+    entrypoint: [/app/poaktu, integrity]
+    environment:
+      DEMO_MODE: "true"
+      DATABASE_URL: postgres://poaktu_runtime:poaktu_runtime_demo_only@db:5432/poaktu?sslmode=disable
+      DOCUMENTS_DIR: /var/lib/poaktu/documents
+    volumes:
+      - documents:/var/lib/poaktu/documents:ro
+      - ${POAKTU_REFERENCE_DIR:?Set an independently retained reference directory}:/reference
+    networks: [database]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    profiles: [integrity]

@@ -132,7 +132,7 @@ async function ready() {
       if (response.status === 200) {
         const body = await response.json();
         assert.equal(body.contour, 'test');
-        assert.equal(body.stage, 'notifications');
+        assert.equal(body.stage, 'audit_integrity');
         return;
       }
     } catch (error) {

@@ -73,7 +73,7 @@ func TestBootstrapRestartAndLedgerConstraints(t *testing.T) {
 	}
 }
 
-func TestReadinessRequiresTheCurrentNotificationSchemaAndAllFeatureTables(t *testing.T) {
+func TestReadinessRequiresTheCurrentIntegritySchemaAndAllFeatureTables(t *testing.T) {
 	pool := testutil.Database(t)
 	ctx := context.Background()
 	if err := bootstrap.Run(ctx, pool); err != nil {
@@ -109,6 +109,17 @@ func TestReadinessRequiresTheCurrentNotificationSchemaAndAllFeatureTables(t *tes
 	}
 	if _, err := pool.Exec(ctx, "ALTER TABLE unavailable_notifications RENAME TO notifications"); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{"audit_chain_head", "audit_chain_entries"} {
+		if _, err := pool.Exec(ctx, "ALTER TABLE "+name+" RENAME TO unavailable_"+name); err != nil {
+			t.Fatal(err)
+		}
+		if err := bootstrap.Ready(ctx, pool); err == nil {
+			t.Fatal("missing integrity table allowed readiness")
+		}
+		if _, err := pool.Exec(ctx, "ALTER TABLE unavailable_"+name+" RENAME TO "+name); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := bootstrap.Ready(ctx, pool); err != nil {
 		t.Fatal(err)
