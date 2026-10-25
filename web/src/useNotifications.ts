@@ -32,7 +32,7 @@ export default function useNotifications({ userId, enabled, active, onUnauthoriz
       const page = await api.notifications(mode === 'badge' ? { limit: 1 } : notificationQuery(selected), next, ticket.signal);
       if (!current()) return;
       setUnreadCount(page.unread_count); setPollError(null);
-      if (mode !== 'badge') { setItems(previous => next ? [...previous, ...page.items] : page.items); setCursor(page.next_cursor); }
+      if (mode !== 'badge') { setError(null); setItems(previous => next ? [...previous, ...page.items] : page.items); setCursor(page.next_cursor); }
     } catch (failure) {
       if (current() && !isAborted(failure)) {
         if (mode === 'feed') setError(failure); else setPollError(failure);

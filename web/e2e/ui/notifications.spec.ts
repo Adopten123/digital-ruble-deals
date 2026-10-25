@@ -137,8 +137,20 @@ test('a revoked tab discards a delayed notification page and stops polling after
 test('list failure has an explicit retry and read status is private to each recipient', async ({ browser, playwright }) => {
   const setup = await fixture(playwright, browser); const supplier = await apiFor(playwright, 'supplier');
   try {
-    await setup.page.goto('/'); await setup.page.route('**/api/v1/notifications?*', route => route.fulfill({ status: 503, json: { error: { code: 'TEMPORARILY_UNAVAILABLE' }, request_id: 'notification-list-error' } }));
+    await setup.page.clock.install(); await setup.page.goto('/'); let firstFeed = true;
+    await setup.page.route('**/api/v1/notifications?*', async route => {
+      if (firstFeed && new URL(route.request().url()).searchParams.get('limit') === '20') {
+        firstFeed = false;
+        await route.fulfill({ status: 503, json: { error: { code: 'TEMPORARILY_UNAVAILABLE' }, request_id: 'notification-list-error' } });
+      } else await route.continue();
+    });
     await setup.page.getByRole('button', { name: 'Уведомления', exact: true }).click(); await expect(panel(setup.page).getByRole('alert').first()).toContainText('notification-list-error'); await expect(panel(setup.page).locator('.notification-item')).toHaveCount(0);
+    await setup.page.clock.runFor(15_001);
+    await expect(panel(setup.page).locator('.notification-item')).toHaveCount(1); await expect(panel(setup.page).getByRole('alert')).toHaveCount(0);
+    await setup.page.unrouteAll({ behavior: 'wait' });
+    await setup.page.route('**/api/v1/notifications?*', route => route.fulfill({ status: 503, json: { error: { code: 'TEMPORARILY_UNAVAILABLE' }, request_id: 'notification-explicit-retry-error' } }));
+    await panel(setup.page).getByRole('button', { name: 'Обновить уведомления', exact: true }).click();
+    await expect(panel(setup.page).getByRole('alert').first()).toContainText('notification-explicit-retry-error'); await expect(panel(setup.page).locator('.notification-item')).toHaveCount(0);
     await setup.page.unrouteAll({ behavior: 'wait' }); await panel(setup.page).getByRole('button', { name: 'Обновить уведомления', exact: true }).click(); await expect(panel(setup.page).locator('.notification-item')).toHaveCount(1);
     const own = (await notices(setup.client)).items[0]; await expect.poll(async () => (await notices(supplier)).items.some(item => item.event.id === own.event.id), { timeout: 15_000 }).toBe(true);
     const peer = (await notices(supplier)).items.find(item => item.event.id === own.event.id)!; expect(peer.read_at).toBeNull();
