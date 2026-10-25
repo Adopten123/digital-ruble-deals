@@ -35,3 +35,7 @@ GRANT INSERT (id, event_id, type, deal_id, payload, created_at) ON outbox TO poa
 GRANT INSERT(id,event_id,recipient_user_id,recipient_organization_id,semantic_key) ON notifications TO poaktu_runtime;
 GRANT UPDATE(read_at) ON notifications TO poaktu_runtime;
 GRANT UPDATE(delivered_at) ON outbox TO poaktu_runtime;
+
+-- The trigger owns append rights. Runtime can only wait for the final audit lock.
+GRANT SELECT ON audit_chain_head,audit_chain_entries TO poaktu_runtime;
+GRANT EXECUTE ON FUNCTION lock_audit_chain_head() TO poaktu_runtime;
