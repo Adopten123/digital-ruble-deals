@@ -1,0 +1,18 @@
+# Optional owner-only preparation. No password/key is mounted into the web UI.
+services:
+  demo:
+    image: poaktu-api:foundation
+    command: [demo, create]
+    environment:
+      DEMO_MODE: "true"
+      DATABASE_URL: postgres://poaktu_owner:poaktu_owner_demo_only@db:5432/poaktu?sslmode=disable
+      APP_KEY_FILE: /var/lib/poaktu/keys/app.key
+    volumes:
+      - app_keys:/var/lib/poaktu/keys:ro
+      - ${POAKTU_DEMO_INPUT_DIR:?Set a private demo password directory}:/input:ro
+    networks: [database]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    profiles: [demo]

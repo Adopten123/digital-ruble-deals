@@ -60,6 +60,9 @@ func run(logger *slog.Logger, args []string) error {
 		command = args[0]
 		args = args[1:]
 	}
+	if command == "demo" {
+		return runDemo(logger, args)
+	}
 	if command == "integrity" {
 		return runIntegrity(logger, args)
 	}
@@ -70,7 +73,7 @@ func run(logger *slog.Logger, args []string) error {
 		return errors.New("unexpected command arguments")
 	}
 	if command != "serve" && command != "migrate" && command != "bootstrap" {
-		return errors.New("usage: poaktu [serve|migrate|bootstrap|healthcheck|integrity]")
+		return errors.New("usage: poaktu [serve|migrate|bootstrap|healthcheck|integrity|demo]")
 	}
 	cfg, err := config.Load()
 	if err != nil {
