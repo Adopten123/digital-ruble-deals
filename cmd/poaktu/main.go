@@ -82,6 +82,11 @@ func run(logger *slog.Logger, args []string) error {
 	if err != nil {
 		return errors.New("invalid DATABASE_URL")
 	}
+	if command == "serve" {
+		// A restarted DB invalidates old session locks. Every replacement serve
+		// connection must regain the lease before it can read or write anything.
+		poolConfig.AfterConnect = integritylock.HoldConnection
+	}
 	poolConfig.MaxConns = 10
 	poolConfig.MinConns = 1
 	poolConfig.MaxConnIdleTime = 5 * time.Minute

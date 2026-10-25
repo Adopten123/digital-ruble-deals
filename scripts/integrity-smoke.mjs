@@ -40,6 +40,13 @@ try {
   cli(['verify', '--checkpoint', checkpoint, '--public-key', '/reference/other-public.pem', '--checkpoint-sha256', first.checkpoint_sha256], 3, 'UNVERIFIABLE');
   docker(['compose', 'up', '-d', '--wait', '--wait-timeout', '90', 'api']);
   cli(args, 3, 'QUIESCENCE_REQUIRED');
+  docker(['compose', 'restart', 'db']);
+  for (let i = 0; ; i++) {
+    try { const r = await fetch('http://localhost:8080/readyz'); if (r.ok) break; } catch {}
+    assert(i < 60, 'API did not reconnect after database restart');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  cli(args, 3, 'QUIESCENCE_REQUIRED');
   docker(['compose', 'stop', 'api']);
   cli(args, 0, 'MATCH');
   console.log('Independent integrity CLI smoke passed; keys and references are not uploaded.');

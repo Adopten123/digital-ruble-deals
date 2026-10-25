@@ -65,6 +65,14 @@ func HoldShared(ctx context.Context, pool *pgxpool.Pool) (func(), error) {
 	}, nil
 }
 
+// HoldConnection gates every newly opened serve connection, including those
+// created after a database restart. It is released by closing the connection.
+// Install it only on the serve pool, never on an independent verifier pool.
+func HoldConnection(ctx context.Context, connection *pgx.Conn) error {
+	_, err := connection.Exec(ctx, `SELECT pg_catalog.pg_advisory_lock_shared(pg_catalog.hashtextextended('poaktu:integrity-lease:v1:'||current_schema(),0))`)
+	return err
+}
+
 // TryExclusive is transaction scoped and never waits for an active serve lease.
 func TryExclusive(ctx context.Context, tx pgx.Tx) error {
 	var ok bool

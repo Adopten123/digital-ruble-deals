@@ -68,3 +68,52 @@ func TestLeaseRequiresAllServeSessionsToStopAndIsSchemaScoped(t *testing.T) {
 	release()
 	exclusive(t, p, nil)
 }
+
+func TestReplacementServeConnectionReacquiresLease(t *testing.T) {
+	p := testutil.Database(t)
+	ctx := context.Background()
+	cfg := p.Config()
+	cfg.AfterConnect = integritylock.HoldConnection
+	live, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	c, err := live.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := c.Conn().PgConn().PID()
+	exclusive(t, p, integritylock.ErrBusy)
+	var terminated bool
+	if err = p.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil || !terminated {
+		t.Fatal("terminate isolated serve connection", err)
+	}
+	if err = c.Ping(ctx); err == nil {
+		t.Fatal("terminated connection still usable")
+	}
+	c.Release()
+	var one int
+	if err = live.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
+		t.Fatal(err)
+	}
+	exclusive(t, p, integritylock.ErrBusy)
+	live.Close()
+	// Closing a socket does not acknowledge backend exit; wait for that bounded
+	// cleanup instead of assuming another session has already processed EOF.
+	for until := time.Now().Add(time.Second); ; {
+		tx, e := p.Begin(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		e = integritylock.TryExclusive(ctx, tx)
+		_ = tx.Rollback(ctx)
+		if e == nil {
+			break
+		}
+		if !errors.Is(e, integritylock.ErrBusy) || time.Now().After(until) {
+			t.Fatal(e)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
