@@ -32,3 +32,6 @@ work/
 
 # Swagger assets are copied from locked npm dependencies before dev/build.
 web/public/api-docs/
+
+# Default documentation example for independently held integrity references.
+/external-reference/
