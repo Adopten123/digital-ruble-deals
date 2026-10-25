@@ -177,6 +177,9 @@ func (r *Repository) Sign(ctx context.Context, cmd service.SignCommand) (out ser
 		if e = cmd.VerifyDocument(*d.Document, storage); e != nil {
 			return e
 		}
+		if e = corepg.LockAuditChainHead(ctx, tx); e != nil {
+			return e
+		}
 		// No account is changed or locked by this stage. The aggregate lock
 		// serializes all its immutable signatures/reserve, and this clock is
 		// sampled after both the lock wait and the potentially slow file read.

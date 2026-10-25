@@ -88,6 +88,12 @@ func (r *Repository) Mutate(ctx context.Context, cmd service.Mutation) (out serv
 			_, e = tx.Exec(ctx, `INSERT INTO idempotency_keys(organization_id,operation,resource,key,request_hash,status_code,response_body) VALUES($1,$2,$3,$4,$5,$6,$7)`, cmd.Actor.OrganizationID, cmd.Operation, resource, cmd.Key, cmd.Hash, out.Status, out.Body)
 			return e
 		}
+		// Reserve takes the final head lock only after its account lock below.
+		if cmd.Operation != "RESERVE_DEAL" {
+			if e = corepg.LockAuditChainHead(ctx, tx); e != nil {
+				return e
+			}
+		}
 		var now time.Time
 		clock := func() error { e := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); now = now.UTC(); return e }
 		if e = clock(); e != nil {
@@ -162,6 +168,9 @@ func (r *Repository) Mutate(ctx context.Context, cmd service.Mutation) (out serv
 				return reject(409, "INVALID_STATE", "Средства уже зарезервированы")
 			}
 			if !errors.Is(e, pgx.ErrNoRows) {
+				return e
+			}
+			if e = corepg.LockAuditChainHead(ctx, tx); e != nil {
 				return e
 			}
 			if e = clock(); e != nil {

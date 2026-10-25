@@ -180,6 +180,9 @@ func (r *Repository) Process(ctx context.Context, env service.Envelope) (out dea
 		if !validReserve {
 			return finish(422, "SETTLEMENT_BLOCKED", "Резерв не соответствует основанию расчёта", "")
 		}
+		if e = corepg.LockAuditChainHead(ctx, tx); e != nil {
+			return e
+		}
 		if e = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); e != nil {
 			return e
 		}

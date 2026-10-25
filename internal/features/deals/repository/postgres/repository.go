@@ -70,6 +70,9 @@ func (r *Repository) Create(ctx context.Context, cmd service.Command) (out servi
 			out = cmd.Invalid.Result(cmd.Actor.RequestID)
 			return persist()
 		}
+		if err := corepg.LockAuditChainHead(ctx, tx); err != nil {
+			return err
+		}
 		var now time.Time
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 			return err
