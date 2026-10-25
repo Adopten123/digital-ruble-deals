@@ -124,7 +124,11 @@ func TestRehashedHistoryAndRollbackNeedIndependentLatestReference(t *testing.T) 
 			t.Fatal(got)
 		}
 		// Replacing SQL hash helpers cannot make the Go verifier accept raw modifications.
-		ownerSQL(t, p, `UPDATE audit_events SET payload='{"another":true}' WHERE id='first'`)
+		ownerSQL(t, p, `UPDATE audit_events SET payload='{"another":true}' WHERE id='first'; CREATE OR REPLACE FUNCTION integrity_event_hash_v1(ev audit_events) RETURNS bytea LANGUAGE sql STABLE AS $$ SELECT c.event_hash FROM audit_chain_entries c WHERE c.audit_id=ev.id $$`)
+		var helperLies bool
+		if err := p.QueryRow(context.Background(), `SELECT integrity_event_hash_v1(a)=c.event_hash FROM audit_events a JOIN audit_chain_entries c ON c.audit_id=a.id WHERE a.id='first'`).Scan(&helperLies); err != nil || !helperLies {
+			t.Fatal("forged SQL helper fixture", err)
+		}
 		if got := svc.Verify(capture(t, r), c, pub); got.Status != svc.CHAIN_BROKEN {
 			t.Fatal(got)
 		}
@@ -136,7 +140,11 @@ func TestRehashedHistoryAndRollbackNeedIndependentLatestReference(t *testing.T) 
 		if err := chainInsert(context.Background(), p, "second"); err != nil {
 			t.Fatal(err)
 		}
-		latestC, _ := checkpoint(t, capture(t, r))
+		forward := capture(t, r)
+		if got := svc.Verify(forward, oldC, pub); got.Status != svc.MISMATCH {
+			t.Fatal("ordinary continuation must be a neutral mismatch", got)
+		}
+		latestC, _ := checkpoint(t, forward)
 		if svc.CheckpointFingerprint(oldC) == svc.CheckpointFingerprint(latestC) {
 			t.Fatal("latest pin unchanged")
 		}
